@@ -1,0 +1,48 @@
+# User data / runtime config
+data/*
+!data/.gitkeep
+
+# Local secrets that users may drop in the repo
+cookies.txt
+**/cookies.txt
+*.cookies
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+release/
+*.zip
+
+# Bundled ffmpeg binaries exceed GitHub's 100MB file limit — ship via Releases only
+resources/ffmpeg-9.0.1/bin/*.exe
+*.egg
+.venv/
+venv/
+env/
+
+# PyInstaller / packaging leftovers
+*.manifest
+*.spec.bak
+warn-*.txt
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs / temp
+*.log
+*.tmp
+*.temp
+.cache/
