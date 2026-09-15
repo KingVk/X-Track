@@ -47,6 +47,7 @@ class AppConfig:
     language: str = "zh"
     dest_folder: str = ""
     cookies_file: str = ""
+    ffmpeg_path: str = ""  # optional; empty = auto-detect
     write_metadata: bool = True
     write_info_json: bool = True
     sleep_min: int = 3
@@ -165,6 +166,7 @@ class ConfigStore:
                 "language": self.config.language,
                 "dest_folder": self.config.dest_folder,
                 "cookies_file": self.config.cookies_file,
+                "ffmpeg_path": getattr(self.config, "ffmpeg_path", "") or "",
                 "write_metadata": self.config.write_metadata,
                 "write_info_json": self.config.write_info_json,
                 "sleep_min": self.config.sleep_min,

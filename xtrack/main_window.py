@@ -200,6 +200,9 @@ class MainWindow(QMainWindow):
         from .installer import check_all_dependencies
         import os
 
+        if hasattr(self, "ffmpeg_path_input"):
+            self._apply_ffmpeg_path_from_config()
+
         status, _ = check_all_dependencies()
         gdl_ok = status["gallery-dl"]["installed"]
         ff_ok = status["ffmpeg"]["installed"]
@@ -281,6 +284,12 @@ class MainWindow(QMainWindow):
             self.watermark_scale_label.setText(t("scale"))
         self.dest_folder_btn.setText(t("browse"))
         self.cookies_file_btn.setText(t("browse"))
+        if hasattr(self, "ffmpeg_path_btn"):
+            self.ffmpeg_path_btn.setText(t("browse"))
+            self.ffmpeg_path_btn.setToolTip(t("ffmpeg_path_tip"))
+        if hasattr(self, "ffmpeg_path_input"):
+            self.ffmpeg_path_input.setPlaceholderText(t("ffmpeg_path_placeholder"))
+            self.ffmpeg_path_input.setToolTip(t("ffmpeg_path_tip"))
         self.write_metadata_check.setText(t("write_metadata"))
         self.write_info_json_check.setText(t("write_info_json"))
         self.cookies_file_input.setPlaceholderText(t("cookies_placeholder"))
@@ -415,6 +424,20 @@ class MainWindow(QMainWindow):
         self.cookies_file_btn.clicked.connect(self._browse_cookies_file)
         cookies_row.addWidget(self.cookies_file_btn)
         layout.addRow(t("cookies"), cookies_row)
+
+        ffmpeg_row = QHBoxLayout()
+        ffmpeg_row.setSpacing(6)
+        self.ffmpeg_path_input = QLineEdit()
+        self.ffmpeg_path_input.setPlaceholderText(t("ffmpeg_path_placeholder"))
+        self.ffmpeg_path_input.setToolTip(t("ffmpeg_path_tip"))
+        self.ffmpeg_path_input.textChanged.connect(self._refresh_account_status)
+        ffmpeg_row.addWidget(self.ffmpeg_path_input, 1)
+        self.ffmpeg_path_btn = QPushButton(t("browse"))
+        self.ffmpeg_path_btn.setFixedWidth(64)
+        self.ffmpeg_path_btn.setToolTip(t("ffmpeg_path_tip"))
+        self.ffmpeg_path_btn.clicked.connect(self._browse_ffmpeg_path)
+        ffmpeg_row.addWidget(self.ffmpeg_path_btn)
+        layout.addRow(t("ffmpeg_path"), ffmpeg_row)
 
         meta_row = QHBoxLayout()
         meta_row.setSpacing(10)
@@ -689,6 +712,9 @@ class MainWindow(QMainWindow):
 
         self.dest_folder_input.setText(cfg.dest_folder)
         self.cookies_file_input.setText(getattr(cfg, "cookies_file", "") or "")
+        if hasattr(self, "ffmpeg_path_input"):
+            self.ffmpeg_path_input.setText(getattr(cfg, "ffmpeg_path", "") or "")
+        self._apply_ffmpeg_path_from_config()
         self.write_metadata_check.setChecked(bool(getattr(cfg, "write_metadata", True)))
         self.write_info_json_check.setChecked(bool(getattr(cfg, "write_info_json", True)))
         self.sleep_min.setValue(cfg.sleep_min)
@@ -1009,6 +1035,34 @@ class MainWindow(QMainWindow):
             self.cookies_file_input.setText(path)
             self._refresh_account_status()
 
+    def _browse_ffmpeg_path(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            t("select_ffmpeg"),
+            "",
+            "ffmpeg (ffmpeg.exe);;Executable (*.exe);;All Files (*)"
+            if sys.platform.startswith("win")
+            else "ffmpeg (*);;All Files (*)",
+        )
+        if path:
+            self.ffmpeg_path_input.setText(path)
+            self._apply_ffmpeg_path_from_config()
+            self._refresh_account_status()
+
+    def _apply_ffmpeg_path_from_config(self):
+        from .installer import DependencyInstaller
+
+        path = getattr(self.config_store.config, "ffmpeg_path", "") or ""
+        if hasattr(self, "ffmpeg_path_input"):
+            path = self.ffmpeg_path_input.text().strip() or path
+        DependencyInstaller.set_configured_ffmpeg_path(path)
+        try:
+            self.watermark_processor.ffmpeg_cmd = self.watermark_processor._find_ffmpeg()
+            self.watermark_processor._installed = None
+            self.watermark_processor._accel = None
+        except Exception:
+            pass
+
     def _browse_file(self, line_edit: QLineEdit):
         path, _ = QFileDialog.getOpenFileName(self, t("select_file"))
         if path:
@@ -1073,6 +1127,9 @@ class MainWindow(QMainWindow):
         cfg = self.config_store.config
         cfg.dest_folder = self.dest_folder_input.text().strip()
         cfg.cookies_file = self.cookies_file_input.text().strip()
+        if hasattr(self, "ffmpeg_path_input"):
+            cfg.ffmpeg_path = self.ffmpeg_path_input.text().strip()
+        self._apply_ffmpeg_path_from_config()
         cfg.write_metadata = self.write_metadata_check.isChecked()
         cfg.write_info_json = self.write_info_json_check.isChecked()
         cfg.sleep_min = self.sleep_min.value()

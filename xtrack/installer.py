@@ -22,6 +22,30 @@ class DependencyInstaller:
 
     LOCAL_BIN_DIR = os.path.join(os.path.expanduser("~"), ".xtrack", "bin")
     _LEGACY_BIN_DIR = os.path.join(os.path.expanduser("~"), ".gallery-dl-ui", "bin")
+    _configured_path: Optional[str] = None
+
+    @classmethod
+    def set_configured_ffmpeg_path(cls, path: Optional[str]) -> None:
+        """Prefer this path (file or directory) when resolving ffmpeg."""
+        cls._configured_path = (path or "").strip().strip('"') or None
+
+    @classmethod
+    def resolve_ffmpeg_candidate(cls, path: Optional[str]) -> Optional[str]:
+        """Accept ffmpeg.exe path, or a folder containing bin/ffmpeg."""
+        raw = (path or "").strip().strip('"')
+        if not raw:
+            return None
+        name = "ffmpeg.exe" if sys.platform.startswith("win") else "ffmpeg"
+        if os.path.isfile(raw):
+            return raw
+        if os.path.isdir(raw):
+            for cand in (
+                os.path.join(raw, name),
+                os.path.join(raw, "bin", name),
+            ):
+                if os.path.isfile(cand):
+                    return cand
+        return None
 
     @staticmethod
     def _host_python() -> Optional[List[str]]:
@@ -71,11 +95,19 @@ class DependencyInstaller:
 
     @classmethod
     def find_ffmpeg_path(cls) -> Optional[str]:
-        """Locate ffmpeg: ~/.xtrack/bin, PATH, then optional local resources/ (dev only)."""
+        """Locate ffmpeg: configured path first, then ~/.xtrack/bin, PATH, local resources/."""
         name = "ffmpeg.exe" if sys.platform.startswith("win") else "ffmpeg"
         root = project_root()
         res = resource_dir()
-        candidates = [
+
+        # Explicit config: honor it strictly (no silent fallback if set but invalid)
+        if cls._configured_path:
+            configured = cls.resolve_ffmpeg_candidate(cls._configured_path)
+            if configured:
+                return configured
+            return None
+
+        candidates: List[Optional[str]] = [
             os.path.join(cls.LOCAL_BIN_DIR, name),
             os.path.join(cls._LEGACY_BIN_DIR, name),
         ]
