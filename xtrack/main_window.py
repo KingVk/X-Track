@@ -61,6 +61,7 @@ class SignalBridge(QObject):
     progress_signal = pyqtSignal(int, int, str)
     counts_signal = pyqtSignal(int)
     finished_signal = pyqtSignal()
+    deps_done_signal = pyqtSignal(str, bool)  # message, success
 
 
 class MainWindow(QMainWindow):
@@ -105,6 +106,7 @@ class MainWindow(QMainWindow):
         self.signals.progress_signal.connect(self._update_watermark_progress)
         self.signals.counts_signal.connect(self._on_url_counts_refresh)
         self.signals.finished_signal.connect(self._on_all_finished)
+        self.signals.deps_done_signal.connect(self._on_deps_check_finished)
 
     def _init_ui(self):
         self.setWindowTitle(t("app_title"))
@@ -242,6 +244,13 @@ class MainWindow(QMainWindow):
         self.url_group.setTitle(t("url_list"))
         self.log_group.setTitle(t("log_output"))
         self.start_btn.setText(t("start"))
+        if hasattr(self, "check_deps_btn"):
+            self.check_deps_btn.setText(t("check_deps"))
+            self.check_deps_btn.setToolTip(t("check_deps_tip"))
+        if hasattr(self, "pause_btn"):
+            self.pause_btn.setText(t("resume") if self.is_paused else t("pause"))
+        if hasattr(self, "stop_btn"):
+            self.stop_btn.setText(t("stop"))
         self._refresh_pause_button_text()
         self.stop_btn.setText(t("stop"))
         if hasattr(self, "settings_btn"):
@@ -283,6 +292,12 @@ class MainWindow(QMainWindow):
         self._update_url_table()
         self._create_menu_bar()
         self._create_account_status_bar()
+        if hasattr(self, "check_deps_btn"):
+            self.check_deps_btn.setText(t("check_deps"))
+            self.check_deps_btn.setToolTip(t("check_deps_tip"))
+        if hasattr(self, "settings_check_deps_btn"):
+            self.settings_check_deps_btn.setText(t("check_deps"))
+            self.settings_check_deps_btn.setToolTip(t("check_deps_tip"))
         if self.settings_dialog is not None:
             self.settings_dialog.setWindowTitle(t("configuration"))
 
@@ -571,6 +586,13 @@ class MainWindow(QMainWindow):
             scroll.setFrameShape(QFrame.Shape.NoFrame)
             scroll.setWidget(self.settings_form)
             root.addWidget(scroll, 1)
+            deps_row = QHBoxLayout()
+            self.settings_check_deps_btn = QPushButton(t("check_deps"))
+            self.settings_check_deps_btn.setToolTip(t("check_deps_tip"))
+            self.settings_check_deps_btn.clicked.connect(self._check_dependencies)
+            deps_row.addWidget(self.settings_check_deps_btn)
+            deps_row.addStretch()
+            root.addLayout(deps_row)
             buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
             buttons.rejected.connect(dlg.reject)
             buttons.accepted.connect(dlg.accept)
@@ -606,6 +628,12 @@ class MainWindow(QMainWindow):
         self.watermark_progress.setFixedHeight(12)
         layout.addWidget(self.watermark_progress)
         layout.addStretch()
+
+        self.check_deps_btn = QPushButton(t("check_deps"))
+        self.check_deps_btn.setMinimumSize(100, 34)
+        self.check_deps_btn.setToolTip(t("check_deps_tip"))
+        self.check_deps_btn.clicked.connect(self._check_dependencies)
+        layout.addWidget(self.check_deps_btn)
 
         self.start_btn = QPushButton(t("start"))
         self.start_btn.setObjectName("primaryBtn")
@@ -1096,27 +1124,94 @@ class MainWindow(QMainWindow):
             self._append_log(f"[{self._timestamp()}] Failed to load config")
 
     def _check_dependencies(self):
+        if hasattr(self, "check_deps_btn"):
+            self.check_deps_btn.setEnabled(False)
+        if hasattr(self, "settings_check_deps_btn"):
+            self.settings_check_deps_btn.setEnabled(False)
         self._append_log(f"[{self._timestamp()}] {t('checking_deps')}")
+        self.status_bar.showMessage(t("checking_deps"), 0)
         threading.Thread(target=self._check_dependencies_thread, daemon=True).start()
 
     def _check_dependencies_thread(self):
-        status, missing = check_all_dependencies()
+        summary_lines: List[str] = []
+        try:
+            status, missing = check_all_dependencies()
 
-        for name, info in status.items():
-            if info["installed"]:
-                self.signals.log_signal.emit(f"[{self._timestamp()}] {name}: {info['version']}")
+            for name, info in status.items():
+                if info["installed"]:
+                    line = f"{name}: {info['version']}"
+                    self.signals.log_signal.emit(f"[{self._timestamp()}] {line}")
+                    summary_lines.append(f"✓ {line}")
+                else:
+                    line = f"{name}: NOT FOUND"
+                    self.signals.log_signal.emit(f"[{self._timestamp()}] {line}")
+                    summary_lines.append(f"✗ {line}")
+
+            if not missing:
+                self.signals.log_signal.emit(f"[{self._timestamp()}] {t('all_deps_installed')}")
+                self.signals.deps_done_signal.emit(
+                    t("all_deps_installed") + "\n\n" + "\n".join(summary_lines),
+                    True,
+                )
+                return
+
+            still_missing = ", ".join(missing.keys())
+            self.signals.log_signal.emit(f"[{self._timestamp()}] {t('missing_deps', deps=still_missing)}")
+            self.signals.log_signal.emit(f"[{self._timestamp()}] {t('auto_installing')}")
+
+            self._install_dependencies_thread(missing)
+
+            status2, still = check_all_dependencies()
+            summary_lines = []
+            for name, info in status2.items():
+                if info["installed"]:
+                    summary_lines.append(f"✓ {name}: {info['version']}")
+                else:
+                    summary_lines.append(f"✗ {name}: NOT FOUND")
+
+            if not still:
+                self.signals.log_signal.emit(f"[{self._timestamp()}] {t('all_deps_done')}")
+                msg = t("all_deps_done") + "\n\n" + "\n".join(summary_lines)
+                self.signals.deps_done_signal.emit(msg, True)
             else:
-                self.signals.log_signal.emit(f"[{self._timestamp()}] {name}: NOT FOUND")
+                missing_list = ", ".join(still.keys())
+                self.signals.log_signal.emit(f"[{self._timestamp()}] {t('still_missing', deps=missing_list)}")
+                tips: List[str] = [t("auto_install_failed_title"), "", *summary_lines, ""]
+                if "ffmpeg" in still:
+                    tips.append(t("manual_install_ffmpeg"))
+                    tips.append("")
+                if "gallery-dl" in still:
+                    tips.append(t("manual_install_gallery_dl"))
+                    tips.append("")
+                tips.append(t("manual_install_footer"))
+                msg = "\n".join(tips)
+                for line in msg.splitlines():
+                    if line.strip():
+                        self.signals.log_signal.emit(f"[{self._timestamp()}] {line}")
+                self.signals.deps_done_signal.emit(msg, False)
+        except Exception as e:
+            self.signals.log_signal.emit(f"[{self._timestamp()}] deps check error: {e}")
+            self.signals.deps_done_signal.emit(t("deps_check_failed", error=str(e)), False)
 
-        if not missing:
-            self.signals.log_signal.emit(f"[{self._timestamp()}] {t('all_deps_installed')}")
-            return
-
-        still_missing = ", ".join(missing.keys())
-        self.signals.log_signal.emit(f"[{self._timestamp()}] {t('missing_deps', deps=still_missing)}")
-        self.signals.log_signal.emit(f"[{self._timestamp()}] {t('auto_installing')}")
-
-        self._install_dependencies_thread(missing)
+    def _on_deps_check_finished(self, message: str, success: bool = True):
+        if hasattr(self, "check_deps_btn"):
+            self.check_deps_btn.setEnabled(True)
+        if hasattr(self, "settings_check_deps_btn"):
+            self.settings_check_deps_btn.setEnabled(True)
+        self._refresh_account_status()
+        try:
+            self.watermark_processor.ffmpeg_cmd = self.watermark_processor._find_ffmpeg()
+            self.watermark_processor._installed = None
+        except Exception:
+            pass
+        self.status_bar.showMessage(
+            t("ready") if success else t("auto_install_failed_title"),
+            5000,
+        )
+        if success:
+            QMessageBox.information(self, t("check_deps"), message)
+        else:
+            QMessageBox.warning(self, t("check_deps"), message)
 
     def _install_dependencies(self, missing: dict):
         self._append_log(f"[{self._timestamp()}] Starting dependency installation...")
@@ -1145,13 +1240,6 @@ class MainWindow(QMainWindow):
             else:
                 self.signals.log_signal.emit(f"[{self._timestamp()}] {t('ffmpeg_failed', error=msg)}")
 
-        status, still_missing = check_all_dependencies()
-        if not still_missing:
-            self.signals.log_signal.emit(f"[{self._timestamp()}] {t('all_deps_done')}")
-        else:
-            missing_list = ", ".join(still_missing.keys())
-            self.signals.log_signal.emit(f"[{self._timestamp()}] {t('still_missing', deps=missing_list)}")
-
     def _install_gallery_dl_and_continue(self):
         installer = DependencyInstaller()
 
@@ -1167,6 +1255,16 @@ class MainWindow(QMainWindow):
                 self.signals.log_signal.emit(f"[{self._timestamp()}] {t('ready_to_download')}")
         else:
             self.signals.log_signal.emit(f"[{self._timestamp()}] {t('gallery_dl_failed', error=msg)}")
+            tip = "\n".join(
+                [
+                    t("auto_install_failed_title"),
+                    "",
+                    t("manual_install_gallery_dl"),
+                    "",
+                    t("manual_install_footer"),
+                ]
+            )
+            self.signals.deps_done_signal.emit(tip, False)
 
     def _install_ffmpeg_and_continue(self):
         installer = DependencyInstaller()
@@ -1186,6 +1284,16 @@ class MainWindow(QMainWindow):
                 self.signals.log_signal.emit(f"[{self._timestamp()}] {t('ready_for_watermark')}")
         else:
             self.signals.log_signal.emit(f"[{self._timestamp()}] {t('ffmpeg_failed', error=msg)}")
+            tip = "\n".join(
+                [
+                    t("auto_install_failed_title"),
+                    "",
+                    t("manual_install_ffmpeg"),
+                    "",
+                    t("manual_install_footer"),
+                ]
+            )
+            self.signals.deps_done_signal.emit(tip, False)
 
     def _update_start_button(self):
         has_urls = len(self.config_store.config.urls) > 0

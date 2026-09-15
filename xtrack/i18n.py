@@ -94,6 +94,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "save_config": "Save Config",
         "load_config": "Load Config",
         "check_deps": "Check Dependencies",
+        "check_deps_tip": "Scan for gallery-dl and ffmpeg; install automatically if missing",
+        "deps_check_failed": "Dependency check failed: {error}",
         "start": "START",
         "pause": "PAUSE",
         "resume": "RESUME",
@@ -161,6 +163,22 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "ffmpeg_failed": "ffmpeg installation failed: {error}",
         "all_deps_done": "All dependencies installed!",
         "still_missing": "Still missing: {deps}",
+        "auto_install_failed_title": "Automatic install failed. Please install manually:",
+        "manual_install_ffmpeg": (
+            "ffmpeg:\n"
+            "  1) winget install Gyan.FFmpeg\n"
+            "  2) Or download essentials from https://www.gyan.dev/ffmpeg/builds/\n"
+            "     and put ffmpeg.exe in %USERPROFILE%\\.xtrack\\bin\n"
+            "  3) Or add ffmpeg to system PATH, then click Check Dependencies again"
+        ),
+        "manual_install_gallery_dl": (
+            "gallery-dl:\n"
+            "  1) pip install -U gallery-dl\n"
+            "  2) Or download from https://github.com/mikf/gallery-dl/releases\n"
+            "     and ensure gallery-dl.exe is on PATH\n"
+            "  3) Packaged builds already include gallery-dl.exe next to X-Track.exe"
+        ),
+        "manual_install_footer": "After installing, click「Check Dependencies」again to verify.",
         "ready_to_download": "Ready to download. Click START again.",
         "ready_for_watermark": "Ready for watermark. Run download again.",
         "watermark_accel": "Watermark acceleration: {mode}",
@@ -271,6 +289,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "save_config": "保存配置",
         "load_config": "加载配置",
         "check_deps": "检查依赖",
+        "check_deps_tip": "搜索系统中的 gallery-dl / ffmpeg；未找到则自动安装",
+        "deps_check_failed": "依赖检查失败: {error}",
         "start": "开始",
         "pause": "暂停",
         "resume": "继续",
@@ -338,6 +358,22 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "ffmpeg_failed": "ffmpeg 安装失败: {error}",
         "all_deps_done": "所有依赖安装完成！",
         "still_missing": "仍然缺失: {deps}",
+        "auto_install_failed_title": "自动安装失败，请手动安装：",
+        "manual_install_ffmpeg": (
+            "ffmpeg：\n"
+            "  1) 在终端执行：winget install Gyan.FFmpeg\n"
+            "  2) 或从 https://www.gyan.dev/ffmpeg/builds/ 下载 essentials，\n"
+            "     将 ffmpeg.exe 放到 %USERPROFILE%\\.xtrack\\bin\n"
+            "  3) 或把 ffmpeg 加入系统 PATH 后，再点一次「检查依赖」"
+        ),
+        "manual_install_gallery_dl": (
+            "gallery-dl：\n"
+            "  1) 执行：pip install -U gallery-dl\n"
+            "  2) 或从 https://github.com/mikf/gallery-dl/releases 下载，\n"
+            "     并确保 gallery-dl.exe 在 PATH 中\n"
+            "  3) 一键发行包已自带 gallery-dl.exe（与 X-Track.exe 同目录）"
+        ),
+        "manual_install_footer": "安装完成后，请再点一次「检查依赖」确认。",
         "ready_to_download": "准备就绪。请再次点击开始。",
         "ready_for_watermark": "水印功能就绪。请重新运行下载。",
         "watermark_accel": "水印加速: {mode}",
