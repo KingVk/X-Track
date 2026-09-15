@@ -71,22 +71,29 @@ class DependencyInstaller:
 
     @classmethod
     def find_ffmpeg_path(cls) -> Optional[str]:
-        """Locate ffmpeg: resources/, project folder, ~/.xtrack/bin, then PATH."""
+        """Locate ffmpeg: ~/.xtrack/bin, PATH, then optional local resources/ (dev only)."""
         name = "ffmpeg.exe" if sys.platform.startswith("win") else "ffmpeg"
         root = project_root()
         res = resource_dir()
         candidates = [
-            os.path.join(res, "ffmpeg-9.0.1", "bin", name),
-            os.path.join(res, "ffmpeg", "bin", name),
-            os.path.join(res, "bin", name),
-            os.path.join(res, name),
-            os.path.join(root, name),
-            os.path.join(root, "bin", name),
-            os.path.join(root, "ffmpeg", "bin", name),
             os.path.join(cls.LOCAL_BIN_DIR, name),
             os.path.join(cls._LEGACY_BIN_DIR, name),
         ]
-        # Bundles like ffmpeg-9.0.1/bin/ffmpeg.exe under resources/ or project root
+        which = shutil.which("ffmpeg")
+        if which:
+            candidates.append(which)
+        # Optional local copies for developers (not shipped in Release zips)
+        candidates.extend(
+            [
+                os.path.join(res, "ffmpeg-9.0.1", "bin", name),
+                os.path.join(res, "ffmpeg", "bin", name),
+                os.path.join(res, "bin", name),
+                os.path.join(res, name),
+                os.path.join(root, name),
+                os.path.join(root, "bin", name),
+                os.path.join(root, "ffmpeg", "bin", name),
+            ]
+        )
         for base in (res, root):
             try:
                 for entry in sorted(os.listdir(base)):
@@ -96,10 +103,6 @@ class DependencyInstaller:
                             candidates.append(bundled)
             except OSError:
                 pass
-
-        which = shutil.which("ffmpeg")
-        if which:
-            candidates.append(which)
 
         seen = set()
         for path in candidates:
@@ -447,9 +450,9 @@ class DependencyInstaller:
         tip = (
             "所有下载源均失败。可手动安装：\n"
             "1) winget install Gyan.FFmpeg\n"
-            "2) 或从 https://www.gyan.dev/ffmpeg/builds/ 下载 zip，\n"
-            f"   将整个文件夹放到 resources/ 目录（如 {resource_dir()}\\ffmpeg-x.y.z），\n"
-            f"   或把 ffmpeg.exe 放到 {self.LOCAL_BIN_DIR}"
+            "2) 或从 https://www.gyan.dev/ffmpeg/builds/ 下载 essentials zip，\n"
+            f"   把 ffmpeg.exe 放到 {self.LOCAL_BIN_DIR}\n"
+            "3) 开发环境也可放到 resources/ffmpeg-x.y.z/bin/（不会打进发行包）"
         )
         if on_progress:
             on_progress(tip)

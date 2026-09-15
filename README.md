@@ -50,7 +50,7 @@ First run may be blocked by SmartScreen — choose **More info → Run anyway**.
 
 ## Run from source
 
-Requirements: Windows 10+, Python 3.8+, [gallery-dl](https://github.com/mikf/gallery-dl), FFmpeg (bundled under `resources/ffmpeg-9.0.1` or PATH).
+Requirements: Windows 10+, Python 3.8+, [gallery-dl](https://github.com/mikf/gallery-dl). **FFmpeg** is optional until you enable watermarks — then install via the in-app prompt, `winget install Gyan.FFmpeg`, or put `ffmpeg.exe` on PATH / in `%USERPROFILE%\.xtrack\bin`.
 
 ```bat
 run.bat
@@ -85,7 +85,7 @@ Tag-triggered CI recipe is saved as `docs/release-workflow.yml` (copy to `.githu
 X-Track/
 ├── main.py                 # entry
 ├── xtrack/                 # application package
-├── resources/              # ffmpeg, fonts, default_watermark.png
+├── resources/              # fonts, default_watermark.png (ffmpeg optional for local/dev only)
 ├── data/                   # runtime config (gitignored)
 ├── tests/                  # manual integration scripts
 ├── scripts/build_release.bat
@@ -100,7 +100,7 @@ X-Track/
 | Item | Note |
 |------|------|
 | Folder | Ship `X-Track.exe` + `gallery-dl.exe` + `_internal/` together |
-| FFmpeg | Bundled under `_internal/resources/ffmpeg-9.0.1/` |
+| FFmpeg | **Not** in the zip — app installs to `~\.xtrack\bin` or uses PATH / winget |
 | Config | Written to `data/` next to the exe |
 | gallery-dl | Use the companion `gallery-dl.exe`, not `X-Track.exe -m …` |
 

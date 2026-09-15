@@ -55,9 +55,12 @@ echo [INFO] Writing README-RELEASE.txt...
   echo Included:
   echo - X-Track.exe          GUI
   echo - gallery-dl.exe       Downloader CLI ^(bundled^)
-  echo - _internal\resources\ffmpeg-9.0.1   ffmpeg for watermarks
   echo - _internal\resources\fonts          Douyin font
   echo - data\                created on first run ^(config^)
+  echo.
+  echo FFmpeg ^(watermarks^):
+  echo - Not bundled. On first watermark use, the app can install to %%USERPROFILE%%\.xtrack\bin
+  echo - Or install system-wide: winget install Gyan.FFmpeg
   echo.
   echo Notes:
   echo - Keep the whole folder together; do not move only the .exe

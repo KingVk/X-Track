@@ -1,3 +1,9 @@
-# FFmpeg binaries are not stored in git (each .exe > 100MB).
-# Windows Release zip includes them under `_internal/resources/ffmpeg-9.0.1/bin/`.
-# For local/dev: place ffmpeg.exe / ffprobe.exe here, or install ffmpeg on PATH.
+# Optional local FFmpeg for development only.
+# Release builds do NOT ship these binaries (GitHub 100MB limit + smaller zips).
+#
+# Runtime resolution order:
+#   1) %USERPROFILE%\.xtrack\bin\ffmpeg.exe  (in-app download / manual)
+#   2) ffmpeg on PATH (winget / chocolatey / system)
+#   3) this folder (dev convenience)
+#
+# Place ffmpeg.exe / ffprobe.exe here if you want a project-local copy while coding.

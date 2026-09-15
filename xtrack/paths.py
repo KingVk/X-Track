@@ -7,7 +7,8 @@ Frozen (PyInstaller) layout::
       gallery-dl.exe       # CLI helper (same folder)
       data/                # writable user config
       _internal/
-        resources/         # ffmpeg, fonts, default_watermark.png
+        resources/         # fonts, default_watermark.png
+                           # (ffmpeg is NOT bundled — use PATH / ~/.xtrack/bin)
 """
 
 from __future__ import annotations

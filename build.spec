@@ -12,7 +12,7 @@ gdl_datas, gdl_binaries, gdl_hiddenimports = collect_all("gallery_dl")
 shared_datas = [
     ("resources/default_watermark.png", "resources"),
     ("resources/fonts", "resources/fonts"),
-    ("resources/ffmpeg-9.0.1", "resources/ffmpeg-9.0.1"),
+    # ffmpeg is NOT bundled — resolved from PATH / ~/.xtrack/bin / in-app download
 ] + gdl_datas
 
 shared_hidden = [

@@ -20,7 +20,7 @@ build/
 release/
 *.zip
 
-# Bundled ffmpeg binaries exceed GitHub's 100MB file limit — ship via Releases only
+# Bundled ffmpeg binaries are optional for local/dev only (not in Release zips)
 resources/ffmpeg-9.0.1/bin/*.exe
 *.egg
 .venv/
