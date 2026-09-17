@@ -530,4 +530,8 @@ QLabel#statusChip {
     padding: 4px 10px;
     font-size: 12px;
 }
+
+QLabel#statusChip[clickable="true"] {
+    border-color: #F87171;
+}
 """

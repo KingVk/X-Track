@@ -66,6 +66,54 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "status_idle": "idle",
         "status_running": "running",
         "status_paused": "paused",
+        "status_chip_click_tip": "Click for setup guide",
+        "open_settings": "Open Settings",
+        "ffmpeg_setup_title": "ffmpeg Setup Guide",
+        "ffmpeg_setup_html": (
+            "<p><b>1. Download ffmpeg</b></p>"
+            "<ul>"
+            "<li>Recommended: <a href='https://www.gyan.dev/ffmpeg/builds/'>"
+            "https://www.gyan.dev/ffmpeg/builds/</a> → download <b>essentials</b> zip</li>"
+            "<li>Or in PowerShell/CMD: <code>winget install Gyan.FFmpeg</code></li>"
+            "</ul>"
+            "<p><b>2. Configure in X-Track</b></p>"
+            "<ul>"
+            "<li>Open <b>Settings (⚙)</b> → <b>ffmpeg Path</b> → Browse and select "
+            "<code>ffmpeg.exe</code> (or its <code>bin</code> folder)</li>"
+            "<li>Or put <code>ffmpeg.exe</code> in "
+            "<code>%USERPROFILE%\\.xtrack\\bin</code> and leave the path empty (auto-detect)</li>"
+            "<li>Or add ffmpeg to system PATH, then click <b>Check Dependencies</b></li>"
+            "</ul>"
+        ),
+        "cookies_setup_title": "Cookies Setup Guide",
+        "cookies_setup_html": (
+            "<p><b>1. Install a cookie export extension</b></p>"
+            "<ul>"
+            "<li>Recommended: <b>Get cookies.txt LOCALLY</b> "
+            "(open-source, cookies stay on your PC)</li>"
+            "<li>Chrome Web Store: "
+            "<a href='https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc'>"
+            "Install for Chrome</a></li>"
+            "<li>Firefox: "
+            "<a href='https://addons.mozilla.org/firefox/addon/get-cookies-txt-locally/'>"
+            "Install for Firefox</a></li>"
+            "<li>Source: "
+            "<a href='https://github.com/kairi003/Get-cookies.txt-LOCALLY'>"
+            "GitHub</a></li>"
+            "</ul>"
+            "<p><b>2. Export cookies</b></p>"
+            "<ol>"
+            "<li>Open Chrome/Edge and log in to <b>https://x.com</b></li>"
+            "<li>Click the extension icon → choose <b>Netscape</b> / cookies.txt format</li>"
+            "<li>Export / save as a <code>.txt</code> file (e.g. <code>x.com_cookies.txt</code>)</li>"
+            "</ol>"
+            "<p><b>3. Configure in X-Track</b></p>"
+            "<ul>"
+            "<li>Open <b>Settings (⚙)</b> → <b>Cookies</b> → Browse and select that "
+            "<code>.txt</code> file</li>"
+            "<li>The top-right <b>cookies</b> chip should turn green</li>"
+            "</ul>"
+        ),
         "media_all": "All",
         "media_image": "Images Only",
         "media_video": "Videos Only",
@@ -265,6 +313,53 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "status_idle": "空闲",
         "status_running": "下载中",
         "status_paused": "已暂停",
+        "status_chip_click_tip": "点击查看配置指引",
+        "open_settings": "打开配置",
+        "ffmpeg_setup_title": "ffmpeg 配置指引",
+        "ffmpeg_setup_html": (
+            "<p><b>1. 下载 ffmpeg</b></p>"
+            "<ul>"
+            "<li>推荐：打开 <a href='https://www.gyan.dev/ffmpeg/builds/'>"
+            "https://www.gyan.dev/ffmpeg/builds/</a>，下载 <b>essentials</b> 压缩包</li>"
+            "<li>或在终端执行：<code>winget install Gyan.FFmpeg</code></li>"
+            "</ul>"
+            "<p><b>2. 在 X-Track 里配置</b></p>"
+            "<ul>"
+            "<li>打开右上角 <b>配置（⚙）</b> → <b>ffmpeg 路径</b> → 浏览并选择 "
+            "<code>ffmpeg.exe</code>（或其 <code>bin</code> 目录）</li>"
+            "<li>或把 <code>ffmpeg.exe</code> 放到 "
+            "<code>%USERPROFILE%\\.xtrack\\bin</code>，路径留空即可自动识别</li>"
+            "<li>或把 ffmpeg 加入系统 PATH 后，再点一次「检查依赖」</li>"
+            "</ul>"
+        ),
+        "cookies_setup_title": "Cookies 配置指引",
+        "cookies_setup_html": (
+            "<p><b>1. 安装 Cookie 导出扩展</b></p>"
+            "<ul>"
+            "<li>推荐：<b>Get cookies.txt LOCALLY</b>（开源，Cookie 只保存在本机）</li>"
+            "<li>Chrome 应用商店："
+            "<a href='https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc'>"
+            "点此安装</a></li>"
+            "<li>Firefox："
+            "<a href='https://addons.mozilla.org/firefox/addon/get-cookies-txt-locally/'>"
+            "点此安装</a></li>"
+            "<li>源码："
+            "<a href='https://github.com/kairi003/Get-cookies.txt-LOCALLY'>"
+            "GitHub</a></li>"
+            "</ul>"
+            "<p><b>2. 导出 Cookies</b></p>"
+            "<ol>"
+            "<li>用 Chrome/Edge 打开并登录 <b>https://x.com</b></li>"
+            "<li>点击扩展图标 → 选择 <b>Netscape</b> / cookies.txt 格式</li>"
+            "<li>导出/保存为 <code>.txt</code> 文件（例如 <code>x.com_cookies.txt</code>）</li>"
+            "</ol>"
+            "<p><b>3. 在 X-Track 里配置</b></p>"
+            "<ul>"
+            "<li>打开右上角 <b>配置（⚙）</b> → <b>Cookie 文件</b> → 浏览并选择该 "
+            "<code>.txt</code></li>"
+            "<li>配置成功后，右上角 <b>cookies</b> 会变为绿色就绪</li>"
+            "</ul>"
+        ),
         "media_all": "全部下载",
         "media_image": "仅图片",
         "media_video": "仅视频",

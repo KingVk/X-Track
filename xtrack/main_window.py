@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 from typing import List, Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QDate
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QDate, QEvent
 from PyQt6.QtGui import QFont, QColor, QTextCharFormat, QAction
 from PyQt6.QtWidgets import (
     QApplication,
@@ -171,9 +171,13 @@ class MainWindow(QMainWindow):
         self.status_ffmpeg = QLabel()
         self.status_config = QLabel()
         self.status_run = QLabel()
+        self._ff_ok = False
+        self._cookies_ok = False
         for lbl in (self.status_gdl, self.status_ffmpeg, self.status_config, self.status_run):
             lbl.setObjectName("statusChip")
             layout.addWidget(lbl)
+        self.status_ffmpeg.installEventFilter(self)
+        self.status_config.installEventFilter(self)
 
         self.settings_btn = QToolButton()
         self.settings_btn.setObjectName("settingsGearBtn")
@@ -228,13 +232,73 @@ class MainWindow(QMainWindow):
         if hasattr(self, "status_gdl"):
             self.status_gdl.setText(self._status_chip("gallery-dl", gdl_ok, gdl_ver if gdl_ok else ""))
             self.status_gdl.setToolTip(str(gdl_ver))
+            self._ff_ok = bool(ff_ok)
             self.status_ffmpeg.setText(self._status_chip("ffmpeg", ff_ok, "" if ff_ok else t("status_missing")))
-            self.status_ffmpeg.setToolTip(str(ff_ver))
+            self.status_ffmpeg.setToolTip(
+                str(ff_ver) if ff_ok else t("status_chip_click_tip")
+            )
+            self.status_ffmpeg.setCursor(
+                Qt.CursorShape.PointingHandCursor if not ff_ok else Qt.CursorShape.ArrowCursor
+            )
+            self.status_ffmpeg.setProperty("clickable", "true" if not ff_ok else "false")
+            self.status_ffmpeg.style().unpolish(self.status_ffmpeg)
+            self.status_ffmpeg.style().polish(self.status_ffmpeg)
+
+            self._cookies_ok = bool(cfg_ok)
             self.status_config.setText(
                 self._status_chip("cookies", cfg_ok, t("status_ok") if cfg_ok else t("status_missing"))
             )
-            self.status_config.setToolTip(cfg_path if cfg_ok else t("cookies_missing_tip"))
+            self.status_config.setToolTip(
+                cfg_path if cfg_ok else t("status_chip_click_tip")
+            )
+            self.status_config.setCursor(
+                Qt.CursorShape.PointingHandCursor if not cfg_ok else Qt.CursorShape.ArrowCursor
+            )
+            self.status_config.setProperty("clickable", "true" if not cfg_ok else "false")
+            self.status_config.style().unpolish(self.status_config)
+            self.status_config.style().polish(self.status_config)
+
             self.status_run.setText(self._status_chip(t("status_account"), True, run_text))
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+            if obj is getattr(self, "status_ffmpeg", None) and not self._ff_ok:
+                self._show_ffmpeg_setup_guide()
+                return True
+            if obj is getattr(self, "status_config", None) and not self._cookies_ok:
+                self._show_cookies_setup_guide()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _show_setup_guide_dialog(self, title: str, html: str):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setMinimumWidth(520)
+        root = QVBoxLayout(dlg)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(12)
+        body = QLabel(html)
+        body.setWordWrap(True)
+        body.setTextFormat(Qt.TextFormat.RichText)
+        body.setOpenExternalLinks(True)
+        body.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction
+        )
+        body.setStyleSheet("QLabel { color: #E2E8F0; line-height: 1.45; }")
+        root.addWidget(body)
+        buttons = QDialogButtonBox()
+        open_cfg = buttons.addButton(t("open_settings"), QDialogButtonBox.ButtonRole.ActionRole)
+        close_btn = buttons.addButton(QDialogButtonBox.StandardButton.Close)
+        open_cfg.clicked.connect(lambda: (dlg.accept(), self._open_settings_dialog()))
+        close_btn.clicked.connect(dlg.reject)
+        root.addWidget(buttons)
+        dlg.exec()
+
+    def _show_ffmpeg_setup_guide(self):
+        self._show_setup_guide_dialog(t("ffmpeg_setup_title"), t("ffmpeg_setup_html"))
+
+    def _show_cookies_setup_guide(self):
+        self._show_setup_guide_dialog(t("cookies_setup_title"), t("cookies_setup_html"))
 
     def _change_language(self, lang: str):
         set_language(lang)
