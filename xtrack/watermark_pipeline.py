@@ -1,4 +1,4 @@
-"""Inline watermark during download: serial jobs, wait-queue size 1, pause downloads."""
+"""Inline watermark during download: watcher enqueues; dedicated worker processes."""
 
 from __future__ import annotations
 
@@ -6,7 +6,8 @@ import os
 import re
 import threading
 import time
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from collections import deque
+from typing import Callable, Deque, Dict, List, Optional, Set
 
 from .watermark import IMAGE_EXTS, VIDEO_EXTS, WatermarkProcessor
 
@@ -99,6 +100,15 @@ class DestMediaWatcher:
         if self._thread:
             self._thread.join(timeout=timeout)
 
+    def flush_once(self) -> None:
+        """One more scan after downloads stop (enqueue leftovers for the worker)."""
+        if not self.dest_folder or not os.path.isdir(self.dest_folder):
+            return
+        try:
+            self._scan_once()
+        except OSError:
+            pass
+
     def _loop(self) -> None:
         while not self.stop_event.is_set():
             if self.dest_folder and os.path.isdir(self.dest_folder):
@@ -131,6 +141,9 @@ class DestMediaWatcher:
                 if self.pipeline.is_seeded(abspath) or self.pipeline.was_done(abspath):
                     self._handled.add(abspath)
                     continue
+                if self.pipeline.is_queued_or_claimed(abspath):
+                    self._handled.add(abspath)
+                    continue
 
                 prev = self._known_size.get(abspath)
                 if prev is None or prev != size:
@@ -155,12 +168,14 @@ class DestMediaWatcher:
 
 
 class InlineWatermarkPipeline:
-    """Serial inline watermark; wait-queue max 1; pause downloads while running."""
+    """Serial watermark on a dedicated worker; wait-queue max 1; pause downloads while running."""
 
-    def __init__(self):
+    def __init__(self, max_waiting: int = 1):
         self._lock = threading.Condition()
+        self._queue: Deque[str] = deque()
+        self._max_waiting = max(1, int(max_waiting or 1))
         self._busy = False
-        self._waiting = 0
+        self._current: Optional[str] = None
         self._enabled = False
         self._settings: dict = {}
         self._processor = WatermarkProcessor()
@@ -172,18 +187,25 @@ class InlineWatermarkPipeline:
         self._seeded: Set[str] = set()
         self._claimed: Set[str] = set()
         self._mode_tag = "text"
+        self._worker: Optional[threading.Thread] = None
+        self._worker_stop = threading.Event()
+        self._accepting = False
 
     @property
     def enabled(self) -> bool:
         return self._enabled
 
     def reset(self) -> None:
+        self.shutdown(timeout=1.0)
         with self._lock:
+            self._queue.clear()
             self._busy = False
-            self._waiting = 0
+            self._current = None
             self._done = []
             self._seeded = set()
             self._claimed = set()
+            self._accepting = False
+            self._lock.notify_all()
 
     def mark_seeded(self, path: str) -> None:
         with self._lock:
@@ -197,6 +219,13 @@ class InlineWatermarkPipeline:
         abspath = os.path.abspath(path)
         with self._lock:
             return any(os.path.abspath(p) == abspath for p in self._done)
+
+    def is_queued_or_claimed(self, path: str) -> bool:
+        abspath = os.path.abspath(path)
+        with self._lock:
+            if abspath in self._claimed or self._current == abspath:
+                return True
+            return any(os.path.abspath(p) == abspath for p in self._queue)
 
     def configure(
         self,
@@ -216,6 +245,11 @@ class InlineWatermarkPipeline:
             self._resume = resume
             self._wait_if_paused = wait_if_paused
             self._mode_tag = (self._settings.get("mode") or "image").lower()
+            self._lock.notify_all()
+        if enabled:
+            self.start_worker()
+        else:
+            self.shutdown(timeout=1.0)
 
     @property
     def done_files(self) -> List[str]:
@@ -225,6 +259,14 @@ class InlineWatermarkPipeline:
     @property
     def mode_tag(self) -> str:
         return self._mode_tag
+
+    @property
+    def pending_count(self) -> int:
+        with self._lock:
+            n = len(self._queue)
+            if self._busy:
+                n += 1
+            return n
 
     def _log(self, msg: str) -> None:
         if not self._on_log:
@@ -237,6 +279,46 @@ class InlineWatermarkPipeline:
             except Exception:
                 pass
 
+    def start_worker(self) -> None:
+        with self._lock:
+            self._accepting = True
+            self._worker_stop.clear()
+            alive = self._worker is not None and self._worker.is_alive()
+        if alive:
+            return
+        self._worker = threading.Thread(
+            target=self._worker_loop, name="WatermarkWorker", daemon=True
+        )
+        self._worker.start()
+
+    def shutdown(self, timeout: float = 5.0) -> None:
+        """Stop accepting jobs; finish current; drop queued leftovers."""
+        with self._lock:
+            self._accepting = False
+            self._queue.clear()
+            self._worker_stop.set()
+            self._lock.notify_all()
+        if self._worker and self._worker.is_alive():
+            self._worker.join(timeout=timeout)
+        with self._lock:
+            if self._worker and not self._worker.is_alive():
+                self._worker = None
+
+    def drain(self, timeout: Optional[float] = None) -> bool:
+        """Wait until queue is empty and worker is idle. Returns False on timeout."""
+        deadline = None if timeout is None else time.time() + max(0.0, float(timeout))
+        with self._lock:
+            while True:
+                if not self._busy and not self._queue:
+                    return True
+                if deadline is not None:
+                    remain = deadline - time.time()
+                    if remain <= 0:
+                        return False
+                    self._lock.wait(timeout=min(0.5, remain))
+                else:
+                    self._lock.wait(timeout=0.5)
+
     def handle_output_line(self, line: str) -> None:
         if not self._enabled:
             return
@@ -245,82 +327,102 @@ class InlineWatermarkPipeline:
             self.submit(path)
 
     def submit(self, path: str) -> bool:
+        """Enqueue path for the worker. Blocks only when wait-queue is full."""
         path = os.path.abspath(path)
         if self._wait_if_paused:
             try:
                 self._wait_if_paused()
             except Exception:
                 pass
+
         with self._lock:
-            if not self._enabled:
+            if not self._enabled or not self._accepting:
                 return False
             if path in self._seeded:
                 return True
             if any(os.path.abspath(p) == path for p in self._done):
                 return True
+            if path in self._claimed or self._current == path:
+                return True
+            if any(os.path.abspath(p) == path for p in self._queue):
+                return True
 
-            if path in self._claimed:
-                while path in self._claimed and not any(os.path.abspath(p) == path for p in self._done):
-                    self._lock.wait(timeout=0.5)
-                return any(os.path.abspath(p) == path for p in self._done)
-
-            while self._busy and self._waiting >= 1:
+            while self._enabled and self._accepting and len(self._queue) >= self._max_waiting:
                 self._log(
                     f"Watermark queue full — pausing until slot frees: {os.path.basename(path)}"
                 )
                 self._lock.wait(timeout=0.5)
+                if path in self._seeded or any(os.path.abspath(p) == path for p in self._done):
+                    return True
+                if path in self._claimed or self._current == path:
+                    return True
+                if any(os.path.abspath(p) == path for p in self._queue):
+                    return True
+                if not self._enabled or not self._accepting:
+                    return False
 
-            if path in self._seeded or any(os.path.abspath(p) == path for p in self._done):
-                return True
-            if path in self._claimed:
-                while path in self._claimed and not any(os.path.abspath(p) == path for p in self._done):
-                    self._lock.wait(timeout=0.5)
-                return True
+            if not self._enabled or not self._accepting:
+                return False
 
-            if self._busy:
-                self._waiting += 1
-                self._log(f"Watermark queued (1/1): {os.path.basename(path)}")
-                try:
-                    while self._busy:
-                        self._lock.wait(timeout=0.5)
-                finally:
-                    self._waiting -= 1
+            self._queue.append(path)
+            self._log(
+                f"Watermark queued ({len(self._queue)}/{self._max_waiting}): {os.path.basename(path)}"
+            )
+            self._lock.notify_all()
+            return True
 
-            if path in self._seeded or any(os.path.abspath(p) == path for p in self._done):
-                return True
-            if path in self._claimed:
-                while path in self._claimed and not any(os.path.abspath(p) == path for p in self._done):
-                    self._lock.wait(timeout=0.5)
-                return True
-
-            self._busy = True
-            self._claimed.add(path)
-
-        if self._suspend:
-            try:
-                self._suspend()
-            except Exception as e:
-                self._log(f"suspend downloads: {e}")
-
-        ok = False
-        try:
-            self._log(f"Watermark start [{self._mode_tag}]: {path}")
-            ok, msg = self._processor.apply_to_file(path, **self._settings)
-            self._log(f"Watermark done [{self._mode_tag}]: {os.path.basename(path)} — {msg}")
+    def _worker_loop(self) -> None:
+        while not self._worker_stop.is_set():
+            path: Optional[str] = None
             with self._lock:
-                if ok:
-                    self._done.append(path)
-        except Exception as e:
-            self._log(f"Watermark error: {path} — {e}")
-            ok = False
-        finally:
-            if self._resume:
-                try:
-                    self._resume()
-                except Exception as e:
-                    self._log(f"resume downloads: {e}")
-            with self._lock:
-                self._claimed.discard(path)
-                self._busy = False
+                while not self._queue and not self._worker_stop.is_set():
+                    self._lock.wait(timeout=0.5)
+                if self._worker_stop.is_set() and not self._queue:
+                    break
+                if not self._queue:
+                    continue
+                path = self._queue.popleft()
+                self._busy = True
+                self._current = path
+                self._claimed.add(path)
                 self._lock.notify_all()
-        return ok
+
+            if path is None:
+                continue
+
+            if self._wait_if_paused:
+                try:
+                    self._wait_if_paused()
+                except Exception:
+                    pass
+
+            if self._suspend:
+                try:
+                    self._suspend()
+                except Exception as e:
+                    self._log(f"suspend downloads: {e}")
+
+            ok = False
+            try:
+                self._log(f"Watermark start [{self._mode_tag}]: {path}")
+                ok, msg = self._processor.apply_to_file(path, **self._settings)
+                self._log(
+                    f"Watermark done [{self._mode_tag}]: {os.path.basename(path)} — {msg}"
+                )
+                with self._lock:
+                    if ok:
+                        self._done.append(path)
+            except Exception as e:
+                self._log(f"Watermark error: {path} — {e}")
+                ok = False
+            finally:
+                if self._resume:
+                    try:
+                        self._resume()
+                    except Exception as e:
+                        self._log(f"resume downloads: {e}")
+                with self._lock:
+                    self._claimed.discard(path)
+                    self._busy = False
+                    self._current = None
+                    self._lock.notify_all()

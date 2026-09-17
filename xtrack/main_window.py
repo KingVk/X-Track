@@ -1,6 +1,7 @@
 import os
 import sys
 import threading
+import time
 from datetime import datetime
 from typing import List, Optional
 
@@ -1485,7 +1486,7 @@ class MainWindow(QMainWindow):
             self._wm_watcher.start()
             self.signals.log_signal.emit(
                 f"[{self._timestamp()}] Inline watermark ON ({settings['mode']}), "
-                f"queue max=1, folder watcher (seeded {seeded})"
+                f"worker thread + queue max=1, folder watcher (seeded {seeded})"
             )
 
     def _on_start_clicked(self):
@@ -1656,7 +1657,26 @@ class MainWindow(QMainWindow):
         self._wm_stop.set()
         if self._wm_watcher:
             self._wm_watcher.join(timeout=2.0)
+            # Catch files finished while the last watermark jobs were running.
+            # Two passes so size-stability (>=0.3s) can elapse for brand-new files.
+            try:
+                self._wm_watcher.flush_once()
+                time.sleep(0.4)
+                self._wm_watcher.flush_once()
+            except Exception:
+                pass
             self._wm_watcher = None
+        if self.wm_pipeline.enabled:
+            pending = self.wm_pipeline.pending_count
+            if pending:
+                self.signals.log_signal.emit(
+                    f"[{self._timestamp()}] Waiting for {pending} watermark job(s) to finish..."
+                )
+            if not self.wm_pipeline.drain(timeout=3600):
+                self.signals.log_signal.emit(
+                    f"[{self._timestamp()}] Watermark drain timed out "
+                    f"(remaining={self.wm_pipeline.pending_count})"
+                )
         self.signals.finished_signal.emit()
 
     def _on_pause_clicked(self):
@@ -1684,6 +1704,7 @@ class MainWindow(QMainWindow):
         self.is_paused = False
         self._pause_gate.set()
         self._wm_stop.set()
+        self.wm_pipeline.shutdown(timeout=2.0)
         self._refresh_account_status()
         self.executor.cancel()
         self._append_log(f"[{self._timestamp()}] {t('stopping')}")
