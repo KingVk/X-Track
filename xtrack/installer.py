@@ -6,6 +6,12 @@ import time
 from typing import Callable, List, Optional, Tuple
 
 from .paths import is_frozen, project_root, resource_dir
+from .procutil import no_window_kwargs
+
+
+def _run(cmd, **kwargs):
+    merged = {**no_window_kwargs(), **kwargs}
+    return subprocess.run(cmd, **merged)
 
 
 class DependencyInstaller:
@@ -59,7 +65,7 @@ class DependencyInstaller:
         ]
         for prefix in candidates:
             try:
-                r = subprocess.run(
+                r = _run(
                     prefix + ["-c", "import sys; print(sys.executable)"],
                     capture_output=True,
                     text=True,
@@ -165,7 +171,7 @@ class DependencyInstaller:
             companion = os.path.join(project_root(), "gallery-dl.exe")
             if os.path.isfile(companion):
                 try:
-                    result = subprocess.run(
+                    result = _run(
                         [companion, "--version"],
                         capture_output=True,
                         text=True,
@@ -178,7 +184,7 @@ class DependencyInstaller:
         cmd = shutil.which("gallery-dl")
         if cmd:
             try:
-                result = subprocess.run(
+                result = _run(
                     ["gallery-dl", "--version"],
                     capture_output=True,
                     text=True,
@@ -210,7 +216,7 @@ class DependencyInstaller:
             on_progress("Installing gallery-dl via pip...")
 
         try:
-            result = subprocess.run(
+            result = _run(
                 install_cmd,
                 capture_output=True,
                 text=True,
@@ -241,7 +247,7 @@ class DependencyInstaller:
         if not cmd:
             return False, "not found"
         try:
-            result = subprocess.run(
+            result = _run(
                 [cmd, "-version"],
                 capture_output=True,
                 text=True,
@@ -332,7 +338,7 @@ class DependencyInstaller:
         if on_progress:
             on_progress("Trying winget install ffmpeg...")
         try:
-            result = subprocess.run(
+            result = _run(
                 [
                     winget, "install", "--id", "Gyan.FFmpeg",
                     "-e", "--accept-package-agreements", "--accept-source-agreements",
@@ -361,7 +367,7 @@ class DependencyInstaller:
         if on_progress:
             on_progress("Trying chocolatey install ffmpeg...")
         try:
-            result = subprocess.run(
+            result = _run(
                 [choco, "install", "ffmpeg", "-y"],
                 capture_output=True,
                 text=True,
@@ -502,7 +508,7 @@ class DependencyInstaller:
 
         for cmd in cmds:
             try:
-                result = subprocess.run(
+                result = _run(
                     cmd,
                     capture_output=True,
                     text=True,
@@ -522,7 +528,7 @@ class DependencyInstaller:
             on_progress("Installing ffmpeg via Homebrew...")
 
         try:
-            result = subprocess.run(
+            result = _run(
                 ["brew", "install", "ffmpeg"],
                 capture_output=True,
                 text=True,

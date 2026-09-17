@@ -6,6 +6,7 @@ from typing import Callable, List, Optional, Tuple
 
 from .download_paths import FILENAME_FORMAT, download_archive_path
 from .paths import is_frozen, project_root
+from .procutil import no_window_kwargs
 
 
 class CommandBuilder:
@@ -248,6 +249,7 @@ class CommandExecutor:
                 encoding="utf-8",
                 errors="replace",
                 bufsize=1,
+                **no_window_kwargs(),
             )
             with self._lock:
                 self._processes.append(process)

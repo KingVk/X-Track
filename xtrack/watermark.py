@@ -5,6 +5,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from .installer import DependencyInstaller
 from .paths import data_dir, is_frozen, project_root, resource_dir
+from .procutil import no_window_kwargs
 
 
 POSITION_COORDS = {
@@ -117,7 +118,7 @@ def ensure_default_watermark_png(text: str = DEFAULT_WATERMARK_TEXT, *, force: b
         "1",
         out,
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, **no_window_kwargs())
     if proc.returncode != 0 or not os.path.isfile(out):
         raise RuntimeError(f"Failed to create default watermark: {proc.stderr or proc.stdout}")
     return out
@@ -249,6 +250,7 @@ class WatermarkProcessor:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                **no_window_kwargs(),
             )
             if result.returncode == 0:
                 self._installed = True, self.ffmpeg_cmd
@@ -295,6 +297,7 @@ class WatermarkProcessor:
                 capture_output=True,
                 text=True,
                 timeout=15,
+                **no_window_kwargs(),
             )
             text = (result.stdout or "") + (result.stderr or "")
             return {line.split()[1] for line in text.splitlines() if line.startswith(" V")}
@@ -318,6 +321,7 @@ class WatermarkProcessor:
                 capture_output=True,
                 text=True,
                 timeout=20,
+                **no_window_kwargs(),
             )
             return result.returncode == 0
         except Exception:
@@ -356,6 +360,7 @@ class WatermarkProcessor:
                 timeout=30,
                 encoding="utf-8",
                 errors="replace",
+                **no_window_kwargs(),
             )
             blob = (result.stderr or "") + (result.stdout or "")
             m = re.search(r"Video:.*?\s(\d{2,5})x(\d{2,5})\b", blob)
@@ -706,6 +711,7 @@ class WatermarkProcessor:
                 capture_output=True,
                 text=True,
                 timeout=300,
+                **no_window_kwargs(),
             )
             return result.returncode == 0 and os.path.isfile(output_path)
         except (subprocess.TimeoutExpired, OSError):
