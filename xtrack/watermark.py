@@ -24,7 +24,8 @@ TEXT_POSITIONS = {
     "center": "x=(w-tw)/2:y=(h-th)/2",
 }
 
-PAD = 10
+PAD = 10  # fallback only; live overlays use ~1% of the scale base
+PAD_RATIO = 0.01  # margin as fraction of scale base (short side / width)
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".avif")
 VIDEO_EXTS = (".mp4", ".webm", ".mov", ".mkv", ".avi", ".m4v")
 H264_VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".avi", ".m4v")
@@ -327,9 +328,33 @@ class WatermarkProcessor:
         except Exception:
             return False
 
-    def get_position_overlay(self, position: str) -> str:
+    def get_position_overlay(self, position: str, pad: Optional[int] = None) -> str:
+        p = PAD if pad is None else max(0, int(pad))
         position_str = POSITION_COORDS.get(position, POSITION_COORDS["bottom-right"])
-        return position_str.replace("pad", str(PAD))
+        return position_str.replace("pad", str(p))
+
+    def get_position_overlay_expr(self, position: str) -> str:
+        """Overlay position with pad ≈ 1% of the main frame short side."""
+        pad = "max(4\\,min(W\\,H)/100)"
+        position_str = POSITION_COORDS.get(position, POSITION_COORDS["bottom-right"])
+        return position_str.replace("pad", pad)
+
+    @staticmethod
+    def _scale_base(main_w: int, main_h: int, adaptive: bool) -> int:
+        """Reference length for equal visual proportion across aspect ratios / DPI."""
+        if main_w <= 0 or main_h <= 0:
+            return 0
+        if adaptive:
+            # Short side: 16:9 and 9:16 (same short edge) get identical watermark size;
+            # 4K ≈ 2× 1080p → watermark scales linearly with resolution.
+            return min(main_w, main_h)
+        return main_w
+
+    @staticmethod
+    def _margin_px(base: int) -> int:
+        if base <= 0:
+            return PAD
+        return max(4, int(round(base * PAD_RATIO)))
 
     def _probe_wh(self, path: str) -> Tuple[int, int]:
         """Return (width, height) of a media file; (0, 0) on failure."""
@@ -380,40 +405,38 @@ class WatermarkProcessor:
         wm_w: int = 0,
         wm_h: int = 0,
     ) -> str:
-        """Overlay PNG watermark without distorting aspect ratio.
+        """Overlay PNG watermark with equal visual proportion of the frame.
 
-        ``scale_ratio`` = watermark **width** as percent of the main frame's
-        shorter side (adaptive) or of the main width (non-adaptive).
+        ``scale_ratio`` = watermark **width** as percent of:
+        - adaptive: the frame's **shorter side** (same look on landscape/portrait,
+          and linear with 1080p→4K)
+        - non-adaptive: the frame width
+
+        Watermark aspect ratio is always preserved. Margin scales with the same base.
         """
-        overlay = self.get_position_overlay(position)
         ratio = max(1, min(50, int(scale_ratio)))
 
         if main_w > 0 and main_h > 0:
-            base = min(main_w, main_h) if adaptive else main_w
+            base = self._scale_base(main_w, main_h, adaptive)
+            pad = self._margin_px(base)
+            overlay = self.get_position_overlay(position, pad=pad)
+            target_w = max(8, int(round(base * ratio / 100.0)))
             if wm_w > 0 and wm_h > 0:
                 aspect = wm_w / float(wm_h)
-                if aspect >= 1.6:
-                    # Wide banner (e.g. text PNG): size by height so glyphs stay readable
-                    # ratio 15 → ~ height 15/3.2 % of short side ≈ 4.7%
-                    target_h = max(10, int(base * ratio / 320))
-                    target_w = max(8, int(round(target_h * aspect)))
-                else:
-                    # Square/tall logo: size by width = ratio% of short side
-                    target_w = max(8, int(base * ratio / 100))
-                    target_h = max(1, int(round(target_w / aspect)))
+                target_h = max(1, int(round(target_w / aspect)))
                 scale = (
                     f"scale={target_w}:{target_h}:flags=lanczos:"
                     f"force_original_aspect_ratio=disable"
                 )
             else:
-                target_w = max(8, int(base * ratio / 100))
                 scale = f"scale={target_w}:-1:flags=lanczos"
             return (
                 f"[1:v]{scale},setsar=1,format=rgba[wm];"
                 f"[0:v][wm]overlay={overlay}"
             )
 
-        # Fallback: ffmpeg scale with reference size (rw/rh); scale2ref is deprecated on ffmpeg 7+
+        # Fallback when probe failed: same short-side / width rule via rw/rh
+        overlay = self.get_position_overlay_expr(position)
         if adaptive:
             size_expr = f"min(rw\\,rh)*{ratio}/100"
         else:
@@ -434,19 +457,15 @@ class WatermarkProcessor:
         outline_color: str = "black",
         outline_width: int = 3,
     ) -> str:
-        """drawtext with outline.
-
-        UI ``scale_ratio`` matches image mode visually: target text *block*
-        width ≈ scale% of the shorter side (font size derived from glyph count).
-        """
+        """drawtext with outline; text block width ≈ scale% of the shorter side."""
         ratio = max(1, min(50, int(scale_ratio)))
         # Approximate CJK/latin mix advance width ≈ 0.95 * fontsize per char
         glyphs = max(4, len(text.strip()) or 4)
         # fontsize so (glyphs * 0.95 * fs) ≈ short * ratio/100
-        # → fs ≈ short * ratio / (100 * glyphs * 0.95)
         denom = max(1.0, glyphs * 0.95)
         fontsize = f"min(w\\,h)*{ratio}/({100 * denom:.2f})"
-        pos = TEXT_POSITIONS.get(position, TEXT_POSITIONS["bottom-right"]).replace("pad", str(PAD))
+        pad = "max(4\\,min(w\\,h)/100)"
+        pos = TEXT_POSITIONS.get(position, TEXT_POSITIONS["bottom-right"]).replace("pad", pad)
         escaped = _escape_drawtext(text)
         font_esc = _escape_fontfile(font_path)
         border = max(1, int(outline_width))

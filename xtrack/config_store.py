@@ -17,8 +17,8 @@ class WatermarkSettings:
     outline_color: str = "black"
     outline_width: int = 3
     position: str = "bottom-right"  # top-left, top-right, bottom-left, bottom-right, center
-    scale_ratio: int = 15  # % of shorter side — image width (or banner height); text block width
-    adaptive: bool = True  # image mode: scale relative to target shorter side
+    scale_ratio: int = 15  # % of frame short side (adaptive) or width — watermark width
+    adaptive: bool = True  # True: equal visual share via short side (landscape/portrait/DPI)
 
 
 @dataclass

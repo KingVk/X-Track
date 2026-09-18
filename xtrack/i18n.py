@@ -137,8 +137,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "wm_font_ok": "Font: {path} (Douyin)",
         "wm_font_missing": "Douyin font missing — place DouyinMeihao.otf in resources/fonts",
         "watermark_adaptive": "Adaptive Size",
-        "watermark_adaptive_tip": "Scale watermark by the shorter side of each image (works for landscape/portrait, 1080p/4K).",
-        "watermark_scale_tip": "Percent of image shorter side. Image: watermark width. Text: mapped to a smaller font so it matches logo weight.",
+        "watermark_adaptive_tip": "Scale by each frame's shorter side so landscape/portrait and 1080p/4K keep the same visual share.",
+        "watermark_scale_tip": "Watermark width as % of the frame's shorter side (equal look across aspect ratios and resolutions).",
         "position": "Position:",
         "select_watermark": "Select Watermark Image",
 
@@ -383,8 +383,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "wm_font_ok": "字体: {path}（抖音美好体）",
         "wm_font_missing": "未找到抖音字体 — 请将 DouyinMeihao.otf 放到 resources/fonts",
         "watermark_adaptive": "自适应大小",
-        "watermark_adaptive_tip": "按每张图片短边比例缩放水印，横/竖图、1080p/4K 都能保持合适大小。",
-        "watermark_scale_tip": "相对图片短边的百分比。图片模式：水印宽度；文字模式会按比例缩小字号，避免过大。",
+        "watermark_adaptive_tip": "按画面短边比例缩放，横/竖屏、1080p/4K 保持同等视觉占比。",
+        "watermark_scale_tip": "水印宽度 = 画面短边的百分比（横竖屏与不同分辨率观感一致）。",
         "position": "位置:",
         "select_watermark": "选择水印图片",
 
