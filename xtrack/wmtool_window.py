@@ -32,7 +32,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .batch_watermark import BatchJob, BatchResult, BatchWatermarker, _is_video, list_media, paths_overlap, resolve_font
+from .batch_watermark import (
+    BatchJob,
+    BatchResult,
+    BatchWatermarker,
+    _is_video,
+    display_color,
+    list_media,
+    normalize_ffmpeg_color,
+    paths_overlap,
+    resolve_font,
+)
 from .config_store import ConfigStore
 from .i18n import t
 from .installer import DependencyInstaller
@@ -42,6 +52,7 @@ _PREFS = "wmtool.json"
 _COLORS = (
     ("wmtool_white", "white"),
     ("wmtool_black", "black"),
+    ("wmtool_gray", "gray"),
     ("wmtool_yellow", "yellow"),
     ("wmtool_red", "red"),
     ("wmtool_cyan", "cyan"),
@@ -57,6 +68,43 @@ _POSITIONS = (
 
 def _prefs_path() -> str:
     return os.path.join(data_dir(), _PREFS)
+
+
+def _setup_color_combo(combo: QComboBox) -> None:
+    combo.setEditable(True)
+    combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+    combo.setFixedWidth(132)
+    for key, value in _COLORS:
+        combo.addItem(key, value)
+    edit = combo.lineEdit()
+    if edit is not None:
+        edit.setPlaceholderText("#RRGGBB")
+
+
+def _combo_color(combo: QComboBox, default: str) -> str:
+    text = combo.currentText().strip()
+    if not text:
+        return default
+    for index in range(combo.count()):
+        if combo.itemText(index) == text:
+            return str(combo.itemData(index) or default)
+        data = str(combo.itemData(index) or "")
+        if text.lower() == data.lower():
+            return data
+    return text
+
+
+def _set_combo_color(combo: QComboBox, value: str) -> None:
+    raw = (value or "").strip()
+    norm = normalize_ffmpeg_color(raw, "")
+    lookup = norm if norm and not norm.startswith("0x") else raw.lower()
+    idx = combo.findData(lookup)
+    if idx < 0 and norm and not norm.startswith("0x"):
+        idx = combo.findData(norm)
+    if idx >= 0:
+        combo.setCurrentIndex(idx)
+        return
+    combo.setEditText(display_color(raw) if raw else "")
 
 
 class _ScanThread(QThread):
@@ -276,9 +324,7 @@ class WatermarkToolWindow(QMainWindow):
         self.text_edit.setMaxLength(80)
         self.color_label = QLabel()
         self.color_combo = QComboBox()
-        self.color_combo.setFixedWidth(120)
-        for key, value in _COLORS:
-            self.color_combo.addItem(key, value)
+        _setup_color_combo(self.color_combo)
         text_layout.addWidget(self.text_label)
         text_layout.addWidget(self.text_edit, 1)
         text_layout.addWidget(self.color_label)
@@ -314,9 +360,7 @@ class WatermarkToolWindow(QMainWindow):
         self.shadow_check.toggled.connect(self._sync_modes)
         self.shadow_color_label = QLabel()
         self.shadow_color = QComboBox()
-        self.shadow_color.setFixedWidth(120)
-        for key, value in _COLORS:
-            self.shadow_color.addItem(key, value)
+        _setup_color_combo(self.shadow_color)
         shadow_layout.addWidget(self.shadow_check)
         shadow_layout.addWidget(self.shadow_color_label)
         shadow_layout.addWidget(self.shadow_color)
@@ -494,6 +538,9 @@ class WatermarkToolWindow(QMainWindow):
         self.color_label.setText(t("wmtool_color"))
         for index, (key, _value) in enumerate(_COLORS):
             self.color_combo.setItemText(index, t(key))
+        color_edit = self.color_combo.lineEdit()
+        if color_edit is not None:
+            color_edit.setPlaceholderText(t("wmtool_color_ph"))
         self.font_label.setText(t("wmtool_font"))
         self.font_edit.setPlaceholderText(t("wmtool_font_ph"))
         self.font_btn.setText(t("browse"))
@@ -502,6 +549,9 @@ class WatermarkToolWindow(QMainWindow):
         self.shadow_color_label.setText(t("wmtool_shadow_color"))
         for index, (key, _value) in enumerate(_COLORS):
             self.shadow_color.setItemText(index, t(key))
+        shadow_edit = self.shadow_color.lineEdit()
+        if shadow_edit is not None:
+            shadow_edit.setPlaceholderText(t("wmtool_color_ph"))
         self._refresh_font_label()
         self.image_label.setText(t("wm_image"))
         self.image_edit.setPlaceholderText(t("wm_image_ph"))
@@ -623,12 +673,16 @@ class WatermarkToolWindow(QMainWindow):
             include_subdirs=self.subdirs.isChecked(),
             kind="text" if self.kind_text.isChecked() else "image",
             text=self.text_edit.text().strip(),
-            text_color=str(self.color_combo.currentData() or getattr(wm, "text_color", "white") or "white"),
+            text_color=str(
+                normalize_ffmpeg_color(_combo_color(self.color_combo, "white"), "white") or "white"
+            ),
             font_path=typed_font or (getattr(wm, "font_path", "") or ""),
             outline_color=getattr(wm, "outline_color", "black") or "black",
             outline_width=int(getattr(wm, "outline_width", 3) or 0),
             shadow_enabled=self.shadow_check.isChecked(),
-            shadow_color=str(self.shadow_color.currentData() or "black"),
+            shadow_color=str(
+                normalize_ffmpeg_color(_combo_color(self.shadow_color, "black"), "black") or "black"
+            ),
             image_path=self.image_edit.text().strip(),
             scale_percent=self.scale_spin.value(),
             pad_percent=float(self.pad_spin.value()),
@@ -760,6 +814,13 @@ class WatermarkToolWindow(QMainWindow):
             return "wmtool_need_folder"
         if job.kind == "text" and not job.text:
             return "wmtool_need_text"
+        if job.kind == "text":
+            if normalize_ffmpeg_color(_combo_color(self.color_combo, "white"), "") is None:
+                return "wmtool_bad_color"
+            if job.shadow_enabled and normalize_ffmpeg_color(
+                _combo_color(self.shadow_color, "black"), ""
+            ) is None:
+                return "wmtool_bad_color"
         if job.kind == "image" and (not job.image_path or not os.path.isfile(job.image_path)):
             return "wmtool_need_image"
         if job.output_mode == "copy":
@@ -854,15 +915,11 @@ class WatermarkToolWindow(QMainWindow):
         default_text = (getattr(wm, "text", "") or "").strip() or "X-Track水印"
         self.text_edit.setText(str(data.get("text") or default_text))
         color = str(data.get("text_color") or getattr(wm, "text_color", "") or "white")
-        idx = self.color_combo.findData(color)
-        if idx >= 0:
-            self.color_combo.setCurrentIndex(idx)
+        _set_combo_color(self.color_combo, color)
         self.font_edit.setText(str(data.get("font_path") or ""))
         self.shadow_check.setChecked(bool(data.get("shadow_enabled", False)))
         shadow_color = str(data.get("shadow_color") or "black")
-        sidx = self.shadow_color.findData(shadow_color)
-        if sidx >= 0:
-            self.shadow_color.setCurrentIndex(sidx)
+        _set_combo_color(self.shadow_color, shadow_color)
         default_image = (getattr(wm, "image_path", "") or "").strip()
         self.image_edit.setText(str(data.get("image_path") or default_image))
         self.scale_spin.setValue(int(data.get("scale_percent") or 8))

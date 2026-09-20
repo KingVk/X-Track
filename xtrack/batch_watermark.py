@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 import threading
 import time
@@ -31,6 +32,54 @@ ProgressCb = Callable[[int, int, str, str, str], None]
 
 _POSITIONS = ("top-left", "top-right", "bottom-right", "bottom-left", "center")
 _CORNERS = ("top-left", "top-right", "bottom-right", "bottom-left")
+
+_NAMED_COLORS = frozenset(
+    {
+        "white",
+        "black",
+        "yellow",
+        "red",
+        "cyan",
+        "gray",
+        "grey",
+        "green",
+        "blue",
+        "orange",
+        "purple",
+        "pink",
+        "brown",
+    }
+)
+
+
+def normalize_ffmpeg_color(raw: str, default: str = "white") -> Optional[str]:
+    """Return an ffmpeg-safe color (name or 0xRRGGBB), or None if invalid."""
+    text = (raw or "").strip()
+    if not text:
+        return default
+    low = text.lower()
+    if low in _NAMED_COLORS:
+        return "gray" if low == "grey" else low
+    hexpart = low
+    if hexpart.startswith("#"):
+        hexpart = hexpart[1:]
+    elif hexpart.startswith("0x"):
+        hexpart = hexpart[2:]
+    if re.fullmatch(r"[0-9a-f]{3}", hexpart):
+        hexpart = "".join(ch * 2 for ch in hexpart)
+    if re.fullmatch(r"[0-9a-f]{6}", hexpart):
+        return f"0x{hexpart}"
+    return None
+
+
+def display_color(raw: str) -> str:
+    """UI-friendly form: named colors stay names, hex becomes #RRGGBB."""
+    norm = normalize_ffmpeg_color(raw, "")
+    if not norm:
+        return (raw or "").strip()
+    if norm.startswith("0x"):
+        return f"#{norm[2:]}"
+    return norm
 
 
 @dataclass
@@ -225,7 +274,7 @@ def _alpha_expr(job: BatchJob, is_video: bool) -> str:
 def _shadow_args(job: BatchJob) -> str:
     if not job.shadow_enabled:
         return ""
-    color = (job.shadow_color or "black").strip() or "black"
+    color = normalize_ffmpeg_color(job.shadow_color, "black") or "black"
     return f":shadowcolor={color}@0.65:shadowx=3:shadowy=3"
 
 
@@ -238,8 +287,8 @@ def _drawtext_one(
     alpha: str,
     enable: str = "",
 ) -> str:
-    color = (job.text_color or "white").strip() or "white"
-    outline = (job.outline_color or "black").strip() or "black"
+    color = normalize_ffmpeg_color(job.text_color, "white") or "white"
+    outline = normalize_ffmpeg_color(job.outline_color, "black") or "black"
     border = max(0, min(12, int(job.outline_width)))
     en = f":enable='{enable}'" if enable else ""
     return (
