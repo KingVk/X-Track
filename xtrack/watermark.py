@@ -435,14 +435,15 @@ class WatermarkProcessor:
                 f"[0:v][wm]overlay={overlay}"
             )
 
-        # Fallback when probe failed: same short-side / width rule via rw/rh
+        # Fallback when probe failed: width relative to reference frame via scale2ref.
+        # Use iw (reference width); `rw` is undefined on some Windows ffmpeg builds.
         overlay = self.get_position_overlay_expr(position)
         if adaptive:
-            size_expr = f"min(rw\\,rh)*{ratio}/100"
+            size_expr = f"min(iw\\,ih)*{ratio}/100"
         else:
-            size_expr = f"rw*{ratio}/100"
+            size_expr = f"iw*{ratio}/100"
         return (
-            f"[1:v][0:v]scale=w='{size_expr}':h=-1:flags=lanczos[wm][base];"
+            f"[1:v][0:v]scale2ref=w='{size_expr}':h=-1:flags=lanczos[wm][base];"
             f"[wm]setsar=1,format=rgba[wm2];"
             f"[base][wm2]overlay={overlay}"
         )

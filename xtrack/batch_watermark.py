@@ -347,8 +347,9 @@ def _geq_fade(job: BatchJob) -> str:
 
 def _image_filter(job: BatchJob, path: str, is_video: bool, looped: bool) -> str:
     ratio = max(1, min(50, int(job.scale_percent)))
-    # Watermark width = frame width * ratio%
-    size = _esc(f"rw*{ratio}/100")
+    # Watermark width = frame (reference) width * ratio%.
+    # Use iw — scale2ref's reference width. `rw` is missing on some Windows builds.
+    size = _esc(f"iw*{ratio}/100")
     opacity = max(0.02, min(1.0, float(job.opacity)))
     fade = max(0.0, float(job.fade_sec))
     # Fade needs a timed watermark stream (looped still). Otherwise keep static alpha.
