@@ -97,10 +97,12 @@ def ensure_default_watermark_png(text: str = DEFAULT_WATERMARK_TEXT, *, force: b
     ffmpeg = DependencyInstaller.find_ffmpeg_path() or "ffmpeg"
     escaped_text = _escape_drawtext(text)
     font_esc = _escape_fontfile(font)
-    # Transparent canvas + white text + black outline; SAR=1 avoids later squash
+    # Transparent canvas + white text + thick black outline (survives downscale).
+    # Canvas is tight around the glyphs so batch scale% ≈ visible text height
+    # (a tall empty plate made 8% marks look ~2–3× smaller than intended).
     vf = (
         f"drawtext=fontfile='{font_esc}':text='{escaped_text}':"
-        f"fontsize=64:fontcolor=white:borderw=3:bordercolor=black:"
+        f"fontsize=96:fontcolor=white:borderw=6:bordercolor=black:"
         f"x=(w-tw)/2:y=(h-th)/2,setsar=1,format=rgba"
     )
     cmd = [
@@ -112,7 +114,7 @@ def ensure_default_watermark_png(text: str = DEFAULT_WATERMARK_TEXT, *, force: b
         "-f",
         "lavfi",
         "-i",
-        "color=c=black@0.0:s=640x160,format=rgba",
+        "color=c=black@0.0:s=720x140,format=rgba",
         "-vf",
         vf,
         "-frames:v",
@@ -424,6 +426,13 @@ class WatermarkProcessor:
             if wm_w > 0 and wm_h > 0:
                 aspect = wm_w / float(wm_h)
                 target_h = max(1, int(round(target_w / aspect)))
+                # Keep watermark inside the frame (preserve aspect).
+                if target_h > main_h:
+                    target_h = main_h
+                    target_w = max(8, int(round(target_h * aspect)))
+                if target_w > main_w:
+                    target_w = main_w
+                    target_h = max(1, int(round(target_w / aspect)))
                 scale = (
                     f"scale={target_w}:{target_h}:flags=lanczos:"
                     f"force_original_aspect_ratio=disable"
@@ -436,15 +445,15 @@ class WatermarkProcessor:
             )
 
         # Fallback when probe failed: width relative to reference frame via scale2ref.
-        # Use iw (reference width); `rw` is undefined on some Windows ffmpeg builds.
+        # Keep watermark aspect (ow/mdar) and fit inside the frame (min with ih*mdar).
         overlay = self.get_position_overlay_expr(position)
         if adaptive:
-            size_expr = f"min(iw\\,ih)*{ratio}/100"
+            size_expr = f"min(min(iw\\,ih)*{ratio}/100\\,ih*mdar)"
         else:
-            size_expr = f"iw*{ratio}/100"
+            size_expr = f"min(iw*{ratio}/100\\,ih*mdar)"
         return (
-            f"[1:v][0:v]scale2ref=w='{size_expr}':h=-1:flags=lanczos[wm][base];"
-            f"[wm]setsar=1,format=rgba[wm2];"
+            f"[1:v][0:v]scale2ref=w='{size_expr}':h='ow/mdar':flags=lanczos[wm][base];"
+            f"[wm]format=rgba[wm2];"
             f"[base][wm2]overlay={overlay}"
         )
 

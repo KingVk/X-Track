@@ -206,7 +206,7 @@ def _dims(kind: str) -> Tuple[str, str, str, str]:
 
 
 def _pad_expr(kind: str, pad_percent: float) -> str:
-    """Margin = watermark width × ratio. No commas (filtergraph-safe)."""
+    """Margin = watermark width × ratio."""
     _, _, mw, _ = _dims(kind)
     pct = max(0.0, min(200.0, float(pad_percent))) / 100.0
     return f"({mw}*{pct:.4f})"
@@ -216,12 +216,13 @@ def _fixed_xy(kind: str, position: str, pad_percent: float = 20.0) -> Tuple[str,
     fw, fh, mw, mh = _dims(kind)
     pad = _pad_expr(kind, pad_percent)
     position = position if position in _POSITIONS else "bottom-right"
+    # max(0, …) keeps oversized watermarks from going fully off-screen
     table = {
         "top-left": (pad, pad),
-        "top-right": (f"({fw}-{mw}-{pad})", pad),
-        "bottom-left": (pad, f"({fh}-{mh}-{pad})"),
-        "bottom-right": (f"({fw}-{mw}-{pad})", f"({fh}-{mh}-{pad})"),
-        "center": (f"(({fw}-{mw})/2)", f"(({fh}-{mh})/2)"),
+        "top-right": (f"max(0,{fw}-{mw}-{pad})", pad),
+        "bottom-left": (pad, f"max(0,{fh}-{mh}-{pad})"),
+        "bottom-right": (f"max(0,{fw}-{mw}-{pad})", f"max(0,{fh}-{mh}-{pad})"),
+        "center": (f"max(0,({fw}-{mw})/2)", f"max(0,({fh}-{mh})/2)"),
     }
     return table[position]
 
@@ -234,8 +235,8 @@ def _corner_xy_expr(kind: str, pad_percent: float, refresh: float) -> Tuple[str,
     span = step * 4
     # 0=TL 1=TR 2=BR 3=BL — right when idx in {1,2}, bottom when idx in {2,3}
     idx = f"floor(mod(t,{span:.3f})/{step:.3f})"
-    span_x = f"({fw}-{mw}-2*{pad})"
-    span_y = f"({fh}-{mh}-2*{pad})"
+    span_x = f"max(0,{fw}-{mw}-2*{pad})"
+    span_y = f"max(0,{fh}-{mh}-2*{pad})"
     x = f"{pad}+{span_x}*between({idx},1,2)"
     y = f"{pad}+{span_y}*between({idx},2,3)"
     return _esc(x), _esc(y)
@@ -244,11 +245,11 @@ def _corner_xy_expr(kind: str, pad_percent: float, refresh: float) -> Tuple[str,
 def _random_xy(kind: str, job: BatchJob, path: str, is_video: bool) -> Tuple[str, str]:
     fw, fh, mw, mh = _dims(kind)
     pad = _pad_expr(kind, job.pad_percent)
-    span_x = f"({fw}-{mw}-2*{pad})"
-    span_y = f"({fh}-{mh}-2*{pad})"
+    span_x = f"max(0,{fw}-{mw}-2*{pad})"
+    span_y = f"max(0,{fh}-{mh}-2*{pad})"
     if is_video:
         step = max(0.5, float(job.refresh_sec))
-        # no commas in these expressions
+        # no commas in these expressions except inside max() — escaped via quotes at use site
         x = f"{pad}+{span_x}*random(floor(t/{step:.3f})*2)"
         y = f"{pad}+{span_y}*random(floor(t/{step:.3f})*2+1)"
     else:
@@ -305,8 +306,9 @@ def _drawtext_one(
 
 def _text_filter(job: BatchJob, path: str, is_video: bool, font: str) -> str:
     ratio = max(1, min(50, int(job.scale_percent)))
-    # Font size = frame width * ratio%
-    fontsize = _esc(f"max(16,w*{ratio}/100)")
+    # Font size ≈ short-side * ratio% (same visual share as image watermarks).
+    # Pass raw commas into _esc once — do not pre-escape.
+    fontsize = _esc(f"max(16,min(w,h)*{ratio}/100)")
     alpha = _alpha_expr(job, is_video)
 
     if job.placement == "corners" and is_video:
@@ -345,26 +347,28 @@ def _geq_fade(job: BatchJob) -> str:
     )
 
 
-def _image_filter(job: BatchJob, path: str, is_video: bool, looped: bool) -> str:
+def _image_filter(job: BatchJob, path: str, is_video: bool, fade_tone: bool) -> str:
     ratio = max(1, min(50, int(job.scale_percent)))
-    # Watermark width = frame (reference) width * ratio%.
-    # Use iw — scale2ref's reference width. `rw` is missing on some Windows builds.
-    size = _esc(f"iw*{ratio}/100")
+    # Match text-mode semantics: scale% ≈ glyph height on the short side.
+    # Width = height * mdar; cap so the mark never exceeds the frame.
+    # ffmpeg min() is binary only — nest pairwise.
+    # (Old iw*R/100 made wide logos ~20px tall at 8% — easy to miss on video.)
+    size_w = f"min(iw,min(ih*mdar,min(iw,ih)*{ratio}/100*mdar))"
     opacity = max(0.02, min(1.0, float(job.opacity)))
     fade = max(0.0, float(job.fade_sec))
     # Fade needs a timed watermark stream (looped still). Otherwise keep static alpha.
-    if is_video and fade >= 0.05 and looped:
+    if is_video and fade >= 0.05 and fade_tone:
         tone = _geq_fade(job)
     else:
         tone = "" if opacity >= 0.999 else f",colorchannelmixer=aa={opacity:.3f}"
 
     head = (
-        f"[1:v][0:v]scale2ref=w='{size}':h='-1':flags=lanczos[wm][base];"
-        f"[wm]setsar=1,format=rgba{tone}"
+        f"[1:v][0:v]scale2ref=w='{size_w}':h='ow/mdar':flags=lanczos[wm][base];"
+        f"[wm]format=rgba{tone}"
     )
     # Never use overlay shortest=1: without a reliable loop it truncates the
     # whole video to one still frame (~tens of KB) while ffmpeg still exits 0.
-    # Looped fades are capped with -t <source duration> in _command instead.
+    # Looped stills are capped with -t <source duration> in _command instead.
     end_flags = "eof_action=repeat"
 
     if job.placement == "corners" and is_video:
@@ -450,6 +454,17 @@ def _probe_duration(ffmpeg: str, path: str) -> float:
     return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
 
 
+def _file_digest(path: str) -> str:
+    digest = hashlib.md5()
+    try:
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
 def _video_output_ok(src: str, dest: str, src_dur: float, ffmpeg: str) -> bool:
     """Reject truncated encodes that ffmpeg still reports as success (~tens of KB)."""
     if not os.path.isfile(dest):
@@ -461,14 +476,33 @@ def _video_output_ok(src: str, dest: str, src_dur: float, ffmpeg: str) -> bool:
         return False
     if dest_sz < 2048:
         return False
-    # Real clips collapsing to tens of KB
-    if src_sz >= 200_000 and dest_sz < max(80_000, int(src_sz * 0.02)):
-        return False
+    # Duration is the reliable signal; size alone false-positives on NVENC of easy content.
     if src_dur >= 1.0:
         dest_dur = _probe_duration(ffmpeg, dest)
-        if dest_dur > 0 and dest_dur < max(0.4, src_dur * 0.5):
+        if dest_dur <= 0:
+            return dest_sz >= max(80_000, int(src_sz * 0.02)) if src_sz >= 200_000 else True
+        if dest_dur < max(0.4, src_dur * 0.85):
             return False
+        return True
+    if src_sz >= 200_000 and dest_sz < max(80_000, int(src_sz * 0.02)):
+        return False
     return True
+
+
+def _still_output_ok(src: str, dest: str) -> bool:
+    """Stills only check size would accept untouched copies; require a real rewrite."""
+    if not os.path.isfile(dest):
+        return False
+    try:
+        if os.path.getsize(dest) < 32:
+            return False
+    except OSError:
+        return False
+    src_hash = _file_digest(src)
+    dest_hash = _file_digest(dest)
+    if not src_hash or not dest_hash:
+        return True
+    return src_hash != dest_hash
 
 
 def _run_ffmpeg(cmd: List[str], cancel: threading.Event, timeout_sec: float = 0) -> Tuple[str, str]:
@@ -661,8 +695,14 @@ class BatchWatermarker:
                         os.remove(dest)
                     except OSError:
                         pass
-                elif os.path.getsize(dest) > 32:
+                elif _still_output_ok(src, dest):
                     return "ok", ""
+                else:
+                    detail = detail or "output unchanged"
+                    try:
+                        os.remove(dest)
+                    except OSError:
+                        pass
             last = detail or last
         return "fail", last
 
@@ -701,18 +741,19 @@ class BatchWatermarker:
             return cmd
 
         fade = max(0.0, float(job.fade_sec))
-        # Loop the still only for timed fade in fixed mode. Cap length with -t
-        # so an infinite loop cannot hang and we never need overlay shortest=.
-        looped = is_video and fade >= 0.05 and job.placement == "fixed"
+        # Loop still only when we can cap with -t. Global -shortest is unsafe:
+        # a shorter audio track would truncate the video.
+        fade_tone = is_video and fade >= 0.05 and job.placement == "fixed"
+        loop_still = is_video and src_dur > 0
         cmd.extend(["-i", src])
-        if looped:
+        if loop_still:
             cmd.extend(["-framerate", "15", "-loop", "1"])
         cmd.extend(
             [
                 "-i",
                 job.image_path,
                 "-filter_complex",
-                _image_filter(job, src, is_video, looped),
+                _image_filter(job, src, is_video, fade_tone),
                 "-map",
                 "[vout]",
             ]
@@ -722,9 +763,6 @@ class BatchWatermarker:
             cmd.extend(_video_encode(ext, use_gpu, accel, audio))
             if src_dur > 0:
                 cmd.extend(["-t", f"{src_dur:.3f}"])
-            elif looped:
-                # Duration unknown: keep a finite bound so looped still cannot hang.
-                cmd.extend(["-shortest"])
         else:
             cmd.extend(_image_encode(ext))
             cmd.extend(["-frames:v", "1"])
