@@ -226,14 +226,19 @@ def _fixed_xy(kind: str, position: str, pad_percent: float = 20.0) -> Tuple[str,
     return table[position]
 
 
-def _enable_slot(index: int, refresh: float) -> str:
-    """True while the watermark sits in corner *index* (0..3)."""
+def _corner_xy_expr(kind: str, pad_percent: float, refresh: float) -> Tuple[str, str]:
+    """Animated x/y that cycle TL → TR → BR → BL. One overlay, no enable=."""
+    fw, fh, mw, mh = _dims(kind)
+    pad = _pad_expr(kind, pad_percent)
     step = max(0.5, float(refresh))
     span = step * 4
-    start = index * step
-    end = (index + 1) * step
-    # between(mod(t,span), start, end) — commas escaped for filtergraph
-    return _esc(f"between(mod(t,{span:.3f}),{start:.3f},{end:.3f})")
+    # 0=TL 1=TR 2=BR 3=BL — right when idx in {1,2}, bottom when idx in {2,3}
+    idx = f"floor(mod(t,{span:.3f})/{step:.3f})"
+    span_x = f"({fw}-{mw}-2*{pad})"
+    span_y = f"({fh}-{mh}-2*{pad})"
+    x = f"{pad}+{span_x}*between({idx},1,2)"
+    y = f"{pad}+{span_y}*between({idx},2,3)"
+    return _esc(x), _esc(y)
 
 
 def _random_xy(kind: str, job: BatchJob, path: str, is_video: bool) -> Tuple[str, str]:
@@ -305,13 +310,8 @@ def _text_filter(job: BatchJob, path: str, is_video: bool, font: str) -> str:
     alpha = _alpha_expr(job, is_video)
 
     if job.placement == "corners" and is_video:
-        parts = []
-        for i, pos in enumerate(_CORNERS):
-            x, y = _fixed_xy("text", pos, job.pad_percent)
-            parts.append(
-                _drawtext_one(job, font, fontsize, x, y, alpha, enable=_enable_slot(i, job.refresh_sec))
-            )
-        return ",".join(parts)
+        x, y = _corner_xy_expr("text", job.pad_percent, job.refresh_sec)
+        return _drawtext_one(job, font, fontsize, x, y, alpha)
 
     if job.placement == "random":
         x, y = _random_xy("text", job, path, is_video)
@@ -358,27 +358,21 @@ def _image_filter(job: BatchJob, path: str, is_video: bool, looped: bool) -> str
         tone = "" if opacity >= 0.999 else f",colorchannelmixer=aa={opacity:.3f}"
 
     head = (
-        f"[1:v][0:v]scale2ref=w='{size}':h=-1:flags=lanczos[wm][base];"
+        f"[1:v][0:v]scale2ref=w='{size}':h='-1':flags=lanczos[wm][base];"
         f"[wm]setsar=1,format=rgba{tone}"
     )
     # With a looped mark (fixed + fade only), shortest=1 ends with the main video.
     # Corner/random never loop — eof_action=repeat is enough and will not hang.
     end_flags = "eof_action=repeat:shortest=1" if looped else "eof_action=repeat"
-    mid_flags = "eof_action=repeat"
 
     if job.placement == "corners" and is_video:
-        parts = [f"{head},split=4[w0][w1][w2][w3]"]
-        prev = "base"
-        for i, pos in enumerate(_CORNERS):
-            x, y = _fixed_xy("overlay", pos, job.pad_percent)
-            out = "vout" if i == 3 else f"t{i}"
-            flags = end_flags if i == 3 else mid_flags
-            parts.append(
-                f"[{prev}][w{i}]overlay=x='{x}':y='{y}':enable='{_enable_slot(i, job.refresh_sec)}'"
-                f":{flags}[{out}]"
-            )
-            prev = out
-        return ";".join(parts)
+        # One overlay with time-based x/y — avoids split+enable graphs that some
+        # Windows ffmpeg builds reject as Invalid argument on filter_complex.
+        x, y = _corner_xy_expr("overlay", job.pad_percent, job.refresh_sec)
+        return (
+            f"{head}[mk];"
+            f"[base][mk]overlay=x='{x}':y='{y}':{end_flags}[vout]"
+        )
 
     if job.placement == "random":
         x, y = _random_xy("overlay", job, path, is_video)
@@ -425,8 +419,8 @@ def _video_encode(ext: str, use_gpu: bool, accel: dict, audio: str) -> List[str]
 def _stderr_text(raw: bytes) -> str:
     text = (raw or b"").decode("utf-8", "replace").strip()
     text = " ".join(text.split())
-    if len(text) > 280:
-        text = text[-280:]
+    if len(text) > 360:
+        text = text[:120] + " … " + text[-240:]
     return text
 
 
