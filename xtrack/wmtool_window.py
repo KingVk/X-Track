@@ -32,12 +32,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .batch_watermark import BatchJob, BatchResult, BatchWatermarker, _is_video, list_media, paths_overlap
+from .batch_watermark import BatchJob, BatchResult, BatchWatermarker, _is_video, list_media, paths_overlap, resolve_font
 from .config_store import ConfigStore
 from .i18n import t
 from .installer import DependencyInstaller
 from .paths import data_dir
-from .watermark import find_douyin_font
 
 _PREFS = "wmtool.json"
 _COLORS = (
@@ -286,10 +285,43 @@ class WatermarkToolWindow(QMainWindow):
         text_layout.addWidget(self.color_combo)
         mark.addWidget(self.text_row)
 
+        self.font_row = QWidget()
+        font_layout = QHBoxLayout(self.font_row)
+        font_layout.setContentsMargins(0, 0, 0, 0)
         self.font_label = QLabel()
-        self.font_label.setWordWrap(True)
-        self.font_label.setStyleSheet("color: #64748B; font-size: 11px; background: transparent;")
-        mark.addWidget(self.font_label)
+        self.font_edit = QLineEdit()
+        self.font_edit.textChanged.connect(lambda _t: self._refresh_font_label())
+        self.font_btn = QPushButton()
+        self.font_btn.setFixedWidth(72)
+        self.font_btn.clicked.connect(self._browse_font)
+        self.font_reset = QPushButton()
+        self.font_reset.setFixedWidth(72)
+        self.font_reset.clicked.connect(self._reset_font)
+        font_layout.addWidget(self.font_label)
+        font_layout.addWidget(self.font_edit, 1)
+        font_layout.addWidget(self.font_btn)
+        font_layout.addWidget(self.font_reset)
+        mark.addWidget(self.font_row)
+        self.font_hint = QLabel()
+        self.font_hint.setWordWrap(True)
+        self.font_hint.setStyleSheet("color: #64748B; font-size: 11px; background: transparent;")
+        mark.addWidget(self.font_hint)
+
+        self.shadow_row = QWidget()
+        shadow_layout = QHBoxLayout(self.shadow_row)
+        shadow_layout.setContentsMargins(0, 0, 0, 0)
+        self.shadow_check = QCheckBox()
+        self.shadow_check.toggled.connect(self._sync_modes)
+        self.shadow_color_label = QLabel()
+        self.shadow_color = QComboBox()
+        self.shadow_color.setFixedWidth(120)
+        for key, value in _COLORS:
+            self.shadow_color.addItem(key, value)
+        shadow_layout.addWidget(self.shadow_check)
+        shadow_layout.addWidget(self.shadow_color_label)
+        shadow_layout.addWidget(self.shadow_color)
+        shadow_layout.addStretch()
+        mark.addWidget(self.shadow_row)
 
         self.image_row = QWidget()
         image_layout = QHBoxLayout(self.image_row)
@@ -323,6 +355,11 @@ class WatermarkToolWindow(QMainWindow):
         self.fade_spin.setSingleStep(0.1)
         self.fade_spin.setDecimals(1)
         self.fade_spin.setValue(0.4)
+        self.pad_label = QLabel()
+        self.pad_spin = QSpinBox()
+        self.pad_spin.setRange(0, 100)
+        self.pad_spin.setValue(20)
+        self.pad_spin.setSuffix(" %")
         for col, (label, widget) in enumerate(
             (
                 (self.scale_label, self.scale_spin),
@@ -332,6 +369,8 @@ class WatermarkToolWindow(QMainWindow):
         ):
             opt.addWidget(label, 0, col * 2)
             opt.addWidget(widget, 0, col * 2 + 1)
+        opt.addWidget(self.pad_label, 1, 0)
+        opt.addWidget(self.pad_spin, 1, 1)
         mark.addLayout(opt)
         self.hint_label = QLabel()
         self.hint_label.setWordWrap(True)
@@ -455,6 +494,14 @@ class WatermarkToolWindow(QMainWindow):
         self.color_label.setText(t("wmtool_color"))
         for index, (key, _value) in enumerate(_COLORS):
             self.color_combo.setItemText(index, t(key))
+        self.font_label.setText(t("wmtool_font"))
+        self.font_edit.setPlaceholderText(t("wmtool_font_ph"))
+        self.font_btn.setText(t("browse"))
+        self.font_reset.setText(t("wmtool_font_reset"))
+        self.shadow_check.setText(t("wmtool_shadow"))
+        self.shadow_color_label.setText(t("wmtool_shadow_color"))
+        for index, (key, _value) in enumerate(_COLORS):
+            self.shadow_color.setItemText(index, t(key))
         self._refresh_font_label()
         self.image_label.setText(t("wm_image"))
         self.image_edit.setPlaceholderText(t("wm_image_ph"))
@@ -465,6 +512,8 @@ class WatermarkToolWindow(QMainWindow):
         self.fade_label.setText(t("wmtool_fade"))
         self.fade_spin.setSuffix(t("wmtool_suffix_sec"))
         self.fade_spin.setToolTip(t("wmtool_fade_tip"))
+        self.pad_label.setText(t("wmtool_pad"))
+        self.pad_spin.setToolTip(t("wmtool_pad_tip"))
         self.hint_label.setText(t("wmtool_hint"))
         self.place_fixed.setText(t("wmtool_fixed"))
         self.place_corners.setText(t("wmtool_corners"))
@@ -491,7 +540,11 @@ class WatermarkToolWindow(QMainWindow):
     def _sync_modes(self) -> None:
         text_mode = self.kind_text.isChecked()
         self.text_row.setVisible(text_mode)
-        self.font_label.setVisible(text_mode)
+        self.font_row.setVisible(text_mode)
+        self.font_hint.setVisible(text_mode)
+        self.shadow_row.setVisible(text_mode)
+        self.shadow_color.setEnabled(self.shadow_check.isChecked())
+        self.shadow_color_label.setEnabled(self.shadow_check.isChecked())
         self.image_row.setVisible(not text_mode)
         fixed = self.place_fixed.isChecked()
         for btn in self.pos_buttons.values():
@@ -522,17 +575,34 @@ class WatermarkToolWindow(QMainWindow):
         return self._config_store.config.watermark
 
     def _refresh_font_label(self) -> None:
-        if not hasattr(self, "font_label"):
+        if not hasattr(self, "font_hint"):
             return
         wm = self._wm_style()
-        path = find_douyin_font(getattr(wm, "font_path", "") or "")
+        typed = self.font_edit.text().strip() if hasattr(self, "font_edit") else ""
+        path = resolve_font(typed or getattr(wm, "font_path", "") or "")
         outline = int(getattr(wm, "outline_width", 3) or 0)
         if path:
-            self.font_label.setText(
-                t("wmtool_font_inherited", path=os.path.basename(path), outline=outline)
+            source = t("wmtool_font_local") if typed else t("wmtool_font_default")
+            self.font_hint.setText(
+                t("wmtool_font_inherited", path=os.path.basename(path), outline=outline, source=source)
             )
         else:
-            self.font_label.setText(t("wm_font_missing"))
+            self.font_hint.setText(t("wm_font_missing"))
+
+    def _browse_font(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            t("wmtool_font"),
+            self.font_edit.text().strip(),
+            "Fonts (*.ttf *.otf *.ttc);;All Files (*)",
+        )
+        if path:
+            self.font_edit.setText(path)
+            self._refresh_font_label()
+
+    def _reset_font(self) -> None:
+        self.font_edit.clear()
+        self._refresh_font_label()
 
     def _job(self) -> BatchJob:
         if self.place_fixed.isChecked():
@@ -547,17 +617,21 @@ class WatermarkToolWindow(QMainWindow):
                 position = value
                 break
         wm = self._wm_style()
+        typed_font = self.font_edit.text().strip()
         return BatchJob(
             source_dir=self.folder_edit.text().strip(),
             include_subdirs=self.subdirs.isChecked(),
             kind="text" if self.kind_text.isChecked() else "image",
             text=self.text_edit.text().strip(),
             text_color=str(self.color_combo.currentData() or getattr(wm, "text_color", "white") or "white"),
-            font_path=getattr(wm, "font_path", "") or "",
+            font_path=typed_font or (getattr(wm, "font_path", "") or ""),
             outline_color=getattr(wm, "outline_color", "black") or "black",
             outline_width=int(getattr(wm, "outline_width", 3) or 0),
+            shadow_enabled=self.shadow_check.isChecked(),
+            shadow_color=str(self.shadow_color.currentData() or "black"),
             image_path=self.image_edit.text().strip(),
             scale_percent=self.scale_spin.value(),
+            pad_percent=float(self.pad_spin.value()),
             opacity=self.opacity_spin.value() / 100.0,
             fade_sec=float(self.fade_spin.value()),
             placement=placement,
@@ -783,9 +857,16 @@ class WatermarkToolWindow(QMainWindow):
         idx = self.color_combo.findData(color)
         if idx >= 0:
             self.color_combo.setCurrentIndex(idx)
+        self.font_edit.setText(str(data.get("font_path") or ""))
+        self.shadow_check.setChecked(bool(data.get("shadow_enabled", False)))
+        shadow_color = str(data.get("shadow_color") or "black")
+        sidx = self.shadow_color.findData(shadow_color)
+        if sidx >= 0:
+            self.shadow_color.setCurrentIndex(sidx)
         default_image = (getattr(wm, "image_path", "") or "").strip()
         self.image_edit.setText(str(data.get("image_path") or default_image))
         self.scale_spin.setValue(int(data.get("scale_percent") or 8))
+        self.pad_spin.setValue(int(data.get("pad_percent") if data.get("pad_percent") is not None else 20))
         self.opacity_spin.setValue(int(data.get("opacity") or 85))
         self.fade_spin.setValue(float(data.get("fade_sec") if data.get("fade_sec") is not None else 0.4))
         placement = str(data.get("placement") or "fixed")
@@ -821,8 +902,12 @@ class WatermarkToolWindow(QMainWindow):
             "kind": job.kind,
             "text": job.text,
             "text_color": job.text_color,
+            "font_path": self.font_edit.text().strip(),
+            "shadow_enabled": job.shadow_enabled,
+            "shadow_color": job.shadow_color,
             "image_path": job.image_path,
             "scale_percent": job.scale_percent,
+            "pad_percent": int(job.pad_percent),
             "opacity": int(round(job.opacity * 100)),
             "fade_sec": job.fade_sec,
             "placement": job.placement,

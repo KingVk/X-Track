@@ -13,7 +13,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from .procutil import no_window_kwargs
 from .installer import DependencyInstaller
@@ -40,11 +40,14 @@ class BatchJob:
     kind: str = "text"  # text | image
     text: str = ""
     text_color: str = "white"
-    font_path: str = ""  # empty = auto Douyin; same as main X-Track watermark config
+    font_path: str = ""  # empty = auto Douyin / main config
     outline_color: str = "black"
     outline_width: int = 3
+    shadow_enabled: bool = False
+    shadow_color: str = "black"
     image_path: str = ""
     scale_percent: int = 8
+    pad_percent: float = 20.0  # margin as % of watermark width
     opacity: float = 0.8
     fade_sec: float = 0.4
     placement: str = "fixed"  # fixed | corners | random
@@ -65,7 +68,7 @@ class BatchResult:
 
 
 def _esc(expr: str) -> str:
-    """Escape commas so ffmpeg's filtergraph splitter leaves the expression intact."""
+    """Escape commas for ffmpeg filtergraph / expression contexts."""
     return expr.replace(",", "\\,")
 
 
@@ -153,63 +156,52 @@ def _dims(kind: str) -> Tuple[str, str, str, str]:
     return "W", "H", "w", "h"
 
 
-def _pad_expr(kind: str) -> str:
-    fw, fh, _, _ = _dims(kind)
-    return f"max(4,min({fw},{fh})/100)"
+def _pad_expr(kind: str, pad_percent: float) -> str:
+    """Margin = watermark width × ratio. No commas (filtergraph-safe)."""
+    _, _, mw, _ = _dims(kind)
+    pct = max(0.0, min(200.0, float(pad_percent))) / 100.0
+    return f"({mw}*{pct:.4f})"
 
 
-def _fixed_xy(kind: str, position: str) -> Tuple[str, str]:
+def _fixed_xy(kind: str, position: str, pad_percent: float = 20.0) -> Tuple[str, str]:
     fw, fh, mw, mh = _dims(kind)
-    pad = _pad_expr(kind)
+    pad = _pad_expr(kind, pad_percent)
     position = position if position in _POSITIONS else "bottom-right"
     table = {
         "top-left": (pad, pad),
-        "top-right": (f"{fw}-{mw}-({pad})", pad),
-        "bottom-left": (pad, f"{fh}-{mh}-({pad})"),
-        "bottom-right": (f"{fw}-{mw}-({pad})", f"{fh}-{mh}-({pad})"),
-        "center": (f"({fw}-{mw})/2", f"({fh}-{mh})/2"),
+        "top-right": (f"({fw}-{mw}-{pad})", pad),
+        "bottom-left": (pad, f"({fh}-{mh}-{pad})"),
+        "bottom-right": (f"({fw}-{mw}-{pad})", f"({fh}-{mh}-{pad})"),
+        "center": (f"(({fw}-{mw})/2)", f"(({fh}-{mh})/2)"),
     }
     return table[position]
 
 
-def _cycle_expr(values: Sequence[str], refresh: float) -> str:
+def _enable_slot(index: int, refresh: float) -> str:
+    """True while the watermark sits in corner *index* (0..3)."""
     step = max(0.5, float(refresh))
     span = step * 4
-    stamp = f"mod(t,{span:.3f})"
-    expr = values[3]
-    for i in range(2, -1, -1):
-        expr = f"if(lt({stamp},{(i + 1) * step:.3f}),{values[i]},{expr})"
-    return expr
+    start = index * step
+    end = (index + 1) * step
+    # between(mod(t,span), start, end) — commas escaped for filtergraph
+    return _esc(f"between(mod(t,{span:.3f}),{start:.3f},{end:.3f})")
 
 
-def _placement_xy(kind: str, job: BatchJob, path: str, is_video: bool) -> Tuple[str, str]:
-    """Return comma-escaped x/y expressions (no surrounding quotes)."""
-    if job.placement == "fixed" or (job.placement == "corners" and not is_video):
-        position = job.fixed_position if job.placement == "fixed" else _hash_corner(path)
-        x, y = _fixed_xy(kind, position)
-        return _esc(x), _esc(y)
-
-    if job.placement == "corners":
-        xs, ys = [], []
-        for pos in _CORNERS:
-            x, y = _fixed_xy(kind, pos)
-            xs.append(x)
-            ys.append(y)
-        return _esc(_cycle_expr(xs, job.refresh_sec)), _esc(_cycle_expr(ys, job.refresh_sec))
-
+def _random_xy(kind: str, job: BatchJob, path: str, is_video: bool) -> Tuple[str, str]:
     fw, fh, mw, mh = _dims(kind)
-    pad = _pad_expr(kind)
-    span_x = f"({fw}-{mw}-2*({pad}))"
-    span_y = f"({fh}-{mh}-2*({pad}))"
+    pad = _pad_expr(kind, job.pad_percent)
+    span_x = f"({fw}-{mw}-2*{pad})"
+    span_y = f"({fh}-{mh}-2*{pad})"
     if is_video:
         step = max(0.5, float(job.refresh_sec))
+        # no commas in these expressions
         x = f"{pad}+{span_x}*random(floor(t/{step:.3f})*2)"
         y = f"{pad}+{span_y}*random(floor(t/{step:.3f})*2+1)"
     else:
         ux, uy = _hash_units(path)
         x = f"{pad}+{span_x}*{ux:.4f}"
         y = f"{pad}+{span_y}*{uy:.4f}"
-    return _esc(x), _esc(y)
+    return x, y
 
 
 def _alpha_expr(job: BatchJob, is_video: bool) -> str:
@@ -230,38 +222,55 @@ def _alpha_expr(job: BatchJob, is_video: bool) -> str:
     )
 
 
-def _text_filter(job: BatchJob, path: str, is_video: bool, font: str) -> str:
-    ratio = max(1, min(50, int(job.scale_percent)))
-    # Font size = long-side * ratio% so a short label still reads as that share of the frame.
-    fontsize = _esc(f"max(16,max(w,h)*{ratio}/100)")
-    x, y = _placement_xy("text", job, path, is_video)
+def _shadow_args(job: BatchJob) -> str:
+    if not job.shadow_enabled:
+        return ""
+    color = (job.shadow_color or "black").strip() or "black"
+    return f":shadowcolor={color}@0.65:shadowx=3:shadowy=3"
+
+
+def _drawtext_one(
+    job: BatchJob,
+    font: str,
+    fontsize: str,
+    x: str,
+    y: str,
+    alpha: str,
+    enable: str = "",
+) -> str:
     color = (job.text_color or "white").strip() or "white"
     outline = (job.outline_color or "black").strip() or "black"
-    alpha = _alpha_expr(job, is_video)
     border = max(0, min(12, int(job.outline_width)))
+    en = f":enable='{enable}'" if enable else ""
     return (
         f"drawtext=fontfile='{_escape_fontfile(font)}':text='{_escape_drawtext(job.text)}':"
         f"fontsize='{fontsize}':fontcolor={color}:borderw={border}:bordercolor={outline}:"
-        f"alpha='{alpha}':x='{x}':y='{y}'"
+        f"alpha='{alpha}':x='{x}':y='{y}'{_shadow_args(job)}{en}"
     )
 
 
-def _image_filter(job: BatchJob, path: str, is_video: bool, looped: bool) -> str:
+def _text_filter(job: BatchJob, path: str, is_video: bool, font: str) -> str:
     ratio = max(1, min(50, int(job.scale_percent)))
-    size = _esc(f"max(rw,rh)*{ratio}/100")
-    x, y = _placement_xy("overlay", job, path, is_video)
-    opacity = max(0.02, min(1.0, float(job.opacity)))
-    fade = max(0.0, float(job.fade_sec))
-    if is_video and fade >= 0.05:
-        tone = _geq_fade(job)
+    # Font size = frame width * ratio%
+    fontsize = _esc(f"max(16,w*{ratio}/100)")
+    alpha = _alpha_expr(job, is_video)
+
+    if job.placement == "corners" and is_video:
+        parts = []
+        for i, pos in enumerate(_CORNERS):
+            x, y = _fixed_xy("text", pos, job.pad_percent)
+            parts.append(
+                _drawtext_one(job, font, fontsize, x, y, alpha, enable=_enable_slot(i, job.refresh_sec))
+            )
+        return ",".join(parts)
+
+    if job.placement == "random":
+        x, y = _random_xy("text", job, path, is_video)
+    elif job.placement == "corners":
+        x, y = _fixed_xy("text", _hash_corner(path), job.pad_percent)
     else:
-        tone = "" if opacity >= 0.999 else f",colorchannelmixer=aa={opacity:.3f}"
-    shortest = ":shortest=1" if looped else ""
-    return (
-        f"[1:v][0:v]scale2ref=w='{size}':h=-1:flags=lanczos[wm][base];"
-        f"[wm]setsar=1,format=rgba{tone}[mk];"
-        f"[base][mk]overlay=x='{x}':y='{y}'{shortest}[vout]"
-    )
+        x, y = _fixed_xy("text", job.fixed_position, job.pad_percent)
+    return _drawtext_one(job, font, fontsize, x, y, alpha)
 
 
 def _geq_fade(job: BatchJob) -> str:
@@ -285,6 +294,61 @@ def _geq_fade(job: BatchJob) -> str:
     return (
         f",geq=r='{_esc('r(X,Y)')}':g='{_esc('g(X,Y)')}':b='{_esc('b(X,Y)')}':a='{pixel}'"
     )
+
+
+def _image_filter(job: BatchJob, path: str, is_video: bool, looped: bool) -> str:
+    ratio = max(1, min(50, int(job.scale_percent)))
+    # Watermark width = frame width * ratio%
+    size = _esc(f"rw*{ratio}/100")
+    opacity = max(0.02, min(1.0, float(job.opacity)))
+    fade = max(0.0, float(job.fade_sec))
+    # Fade needs a timed watermark stream (looped still). Otherwise keep static alpha.
+    if is_video and fade >= 0.05 and looped:
+        tone = _geq_fade(job)
+    else:
+        tone = "" if opacity >= 0.999 else f",colorchannelmixer=aa={opacity:.3f}"
+
+    head = (
+        f"[1:v][0:v]scale2ref=w='{size}':h=-1:flags=lanczos[wm][base];"
+        f"[wm]setsar=1,format=rgba{tone}"
+    )
+    # With a looped mark (fixed + fade only), shortest=1 ends with the main video.
+    # Corner/random never loop — eof_action=repeat is enough and will not hang.
+    end_flags = "eof_action=repeat:shortest=1" if looped else "eof_action=repeat"
+    mid_flags = "eof_action=repeat"
+
+    if job.placement == "corners" and is_video:
+        parts = [f"{head},split=4[w0][w1][w2][w3]"]
+        prev = "base"
+        for i, pos in enumerate(_CORNERS):
+            x, y = _fixed_xy("overlay", pos, job.pad_percent)
+            out = "vout" if i == 3 else f"t{i}"
+            flags = end_flags if i == 3 else mid_flags
+            parts.append(
+                f"[{prev}][w{i}]overlay=x='{x}':y='{y}':enable='{_enable_slot(i, job.refresh_sec)}'"
+                f":{flags}[{out}]"
+            )
+            prev = out
+        return ";".join(parts)
+
+    if job.placement == "random":
+        x, y = _random_xy("overlay", job, path, is_video)
+    elif job.placement == "corners":
+        x, y = _fixed_xy("overlay", _hash_corner(path), job.pad_percent)
+    else:
+        x, y = _fixed_xy("overlay", job.fixed_position, job.pad_percent)
+    return (
+        f"{head}[mk];"
+        f"[base][mk]overlay=x='{x}':y='{y}':{end_flags}[vout]"
+    )
+
+
+def resolve_font(explicit: str = "") -> str:
+    """Prefer an explicit local font file; otherwise Douyin / system fallback."""
+    path = (explicit or "").strip().strip('"')
+    if path and os.path.isfile(path):
+        return os.path.abspath(path)
+    return find_douyin_font(path)
 
 
 def _image_encode(ext: str) -> List[str]:
@@ -317,7 +381,7 @@ def _stderr_text(raw: bytes) -> str:
     return text
 
 
-def _run_ffmpeg(cmd: List[str], cancel: threading.Event) -> Tuple[str, str]:
+def _run_ffmpeg(cmd: List[str], cancel: threading.Event, timeout_sec: float = 0) -> Tuple[str, str]:
     """Return (status, detail). status is ok | fail | cancelled."""
     proc = subprocess.Popen(
         cmd,
@@ -335,8 +399,9 @@ def _run_ffmpeg(cmd: List[str], cancel: threading.Event) -> Tuple[str, str]:
     reader = threading.Thread(target=_read, daemon=True)
     reader.start()
     killed = False
+    started = time.time()
     while proc.poll() is None:
-        if cancel.is_set():
+        if cancel.is_set() or (timeout_sec > 0 and time.time() - started > timeout_sec):
             killed = True
             proc.terminate()
             try:
@@ -364,7 +429,7 @@ class BatchWatermarker:
         if job.kind == "text":
             if not (job.text or "").strip():
                 return "wmtool_need_text"
-            if not find_douyin_font(job.font_path):
+            if not resolve_font(job.font_path):
                 return "wmtool_font_missing"
         else:
             if not job.image_path or not os.path.isfile(job.image_path):
@@ -402,7 +467,7 @@ class BatchWatermarker:
             result.error_key = "wmtool_no_media"
             return result
 
-        font = find_douyin_font(job.font_path) if job.kind == "text" else ""
+        font = resolve_font(job.font_path) if job.kind == "text" else ""
         accel = self._processor._detect_acceleration()
         total = len(files)
         if on_progress:
@@ -520,9 +585,11 @@ class BatchWatermarker:
             # Prefer hardware decode when a GPU encoder is available; filters still run on CPU.
             cmd.extend(["-hwaccel", "auto"])
         if job.kind == "text":
-            cmd.extend(["-i", src, "-vf", _text_filter(job, src, is_video, font)])
+            # filter_complex keeps multi-drawtext corner mode in one graph.
+            vf = _text_filter(job, src, is_video, font)
+            cmd.extend(["-i", src, "-filter_complex", f"[0:v]{vf}[vout]", "-map", "[vout]"])
             if is_video:
-                cmd.extend(["-map", "0:v:0", "-map", "0:a?"])
+                cmd.extend(["-map", "0:a?"])
                 cmd.extend(_video_encode(ext, use_gpu, accel, audio))
             else:
                 cmd.extend(_image_encode(ext))
@@ -531,12 +598,22 @@ class BatchWatermarker:
             return cmd
 
         fade = max(0.0, float(job.fade_sec))
-        looped = is_video and fade >= 0.05
+        # Loop the still only for timed fade in fixed mode. Corner/random + loop
+        # stalls ffmpeg when combined with enable= overlays.
+        looped = is_video and fade >= 0.05 and job.placement == "fixed"
         cmd.extend(["-i", src])
         if looped:
             cmd.extend(["-framerate", "15", "-loop", "1"])
-        cmd.extend(["-i", job.image_path, "-filter_complex", _image_filter(job, src, is_video, looped)])
-        cmd.extend(["-map", "[vout]"])
+        cmd.extend(
+            [
+                "-i",
+                job.image_path,
+                "-filter_complex",
+                _image_filter(job, src, is_video, looped),
+                "-map",
+                "[vout]",
+            ]
+        )
         if is_video:
             cmd.extend(["-map", "0:a?"])
             cmd.extend(_video_encode(ext, use_gpu, accel, audio))
