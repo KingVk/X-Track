@@ -362,9 +362,10 @@ def _image_filter(job: BatchJob, path: str, is_video: bool, looped: bool) -> str
         f"[1:v][0:v]scale2ref=w='{size}':h='-1':flags=lanczos[wm][base];"
         f"[wm]setsar=1,format=rgba{tone}"
     )
-    # With a looped mark (fixed + fade only), shortest=1 ends with the main video.
-    # Corner/random never loop — eof_action=repeat is enough and will not hang.
-    end_flags = "eof_action=repeat:shortest=1" if looped else "eof_action=repeat"
+    # Never use overlay shortest=1: without a reliable loop it truncates the
+    # whole video to one still frame (~tens of KB) while ffmpeg still exits 0.
+    # Looped fades are capped with -t <source duration> in _command instead.
+    end_flags = "eof_action=repeat"
 
     if job.placement == "corners" and is_video:
         # One overlay with time-based x/y — avoids split+enable graphs that some
@@ -423,6 +424,51 @@ def _stderr_text(raw: bytes) -> str:
     if len(text) > 360:
         text = text[:120] + " … " + text[-240:]
     return text
+
+
+def _probe_duration(ffmpeg: str, path: str) -> float:
+    """Return media duration in seconds, or 0 if unknown."""
+    if not path or not os.path.isfile(path):
+        return 0.0
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-hide_banner", "-i", path],
+            capture_output=True,
+            timeout=45,
+            **no_window_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 0.0
+    blob = (result.stderr or b"").decode("utf-8", "replace")
+    match = re.search(
+        r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)",
+        blob,
+    )
+    if not match:
+        return 0.0
+    hours, minutes, seconds = match.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def _video_output_ok(src: str, dest: str, src_dur: float, ffmpeg: str) -> bool:
+    """Reject truncated encodes that ffmpeg still reports as success (~tens of KB)."""
+    if not os.path.isfile(dest):
+        return False
+    try:
+        dest_sz = os.path.getsize(dest)
+        src_sz = os.path.getsize(src)
+    except OSError:
+        return False
+    if dest_sz < 2048:
+        return False
+    # Real clips collapsing to tens of KB
+    if src_sz >= 200_000 and dest_sz < max(80_000, int(src_sz * 0.02)):
+        return False
+    if src_dur >= 1.0:
+        dest_dur = _probe_duration(ffmpeg, dest)
+        if dest_dur > 0 and dest_dur < max(0.4, src_dur * 0.5):
+            return False
+    return True
 
 
 def _run_ffmpeg(cmd: List[str], cancel: threading.Event, timeout_sec: float = 0) -> Tuple[str, str]:
@@ -597,15 +643,26 @@ class BatchWatermarker:
             attempts = [(False, "copy")]
 
         last = "ffmpeg failed"
+        src_dur = _probe_duration(self._processor.ffmpeg_cmd or "ffmpeg", src) if is_video else 0.0
         for use_gpu, audio in attempts:
             if cancel.is_set():
                 return "cancelled", ""
-            cmd = self._command(job, src, dest, font, is_video, use_gpu, accel, audio)
+            cmd = self._command(job, src, dest, font, is_video, use_gpu, accel, audio, src_dur)
             status, detail = _run_ffmpeg(cmd, cancel)
-            if status == "ok" and os.path.isfile(dest) and os.path.getsize(dest) > 32:
-                return "ok", ""
             if status == "cancelled":
                 return "cancelled", ""
+            if status == "ok" and os.path.isfile(dest):
+                ffmpeg = self._processor.ffmpeg_cmd or "ffmpeg"
+                if is_video:
+                    if _video_output_ok(src, dest, src_dur, ffmpeg):
+                        return "ok", ""
+                    detail = detail or "output too small or truncated"
+                    try:
+                        os.remove(dest)
+                    except OSError:
+                        pass
+                elif os.path.getsize(dest) > 32:
+                    return "ok", ""
             last = detail or last
         return "fail", last
 
@@ -619,6 +676,7 @@ class BatchWatermarker:
         use_gpu: bool,
         accel: dict,
         audio: str,
+        src_dur: float = 0.0,
     ) -> List[str]:
         # Always refresh ffmpeg path in case the user just configured it.
         self._processor.ffmpeg_cmd = self._processor._find_ffmpeg()
@@ -629,12 +687,13 @@ class BatchWatermarker:
             # Prefer hardware decode when a GPU encoder is available; filters still run on CPU.
             cmd.extend(["-hwaccel", "auto"])
         if job.kind == "text":
-            # filter_complex keeps multi-drawtext corner mode in one graph.
             vf = _text_filter(job, src, is_video, font)
             cmd.extend(["-i", src, "-filter_complex", f"[0:v]{vf}[vout]", "-map", "[vout]"])
             if is_video:
                 cmd.extend(["-map", "0:a?"])
                 cmd.extend(_video_encode(ext, use_gpu, accel, audio))
+                if src_dur > 0:
+                    cmd.extend(["-t", f"{src_dur:.3f}"])
             else:
                 cmd.extend(_image_encode(ext))
                 cmd.extend(["-frames:v", "1"])
@@ -642,8 +701,8 @@ class BatchWatermarker:
             return cmd
 
         fade = max(0.0, float(job.fade_sec))
-        # Loop the still only for timed fade in fixed mode. Corner/random + loop
-        # stalls ffmpeg when combined with enable= overlays.
+        # Loop the still only for timed fade in fixed mode. Cap length with -t
+        # so an infinite loop cannot hang and we never need overlay shortest=.
         looped = is_video and fade >= 0.05 and job.placement == "fixed"
         cmd.extend(["-i", src])
         if looped:
@@ -661,6 +720,11 @@ class BatchWatermarker:
         if is_video:
             cmd.extend(["-map", "0:a?"])
             cmd.extend(_video_encode(ext, use_gpu, accel, audio))
+            if src_dur > 0:
+                cmd.extend(["-t", f"{src_dur:.3f}"])
+            elif looped:
+                # Duration unknown: keep a finite bound so looped still cannot hang.
+                cmd.extend(["-shortest"])
         else:
             cmd.extend(_image_encode(ext))
             cmd.extend(["-frames:v", "1"])
