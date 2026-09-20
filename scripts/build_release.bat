@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal EnableExtensions
 cd /d "%~dp0.."
 
-set VERSION=1.0.0
+set VERSION=1.0.1
 set OUTDIR=release
 set NAME=X-Track-%VERSION%-windows
 
@@ -42,6 +42,10 @@ if not exist "dist\X-Track\gallery-dl.exe" (
   echo [ERROR] dist\X-Track\gallery-dl.exe missing
   exit /b 1
 )
+if not exist "dist\X-Track\X-Track-Watermark.exe" (
+  echo [ERROR] dist\X-Track\X-Track-Watermark.exe missing
+  exit /b 1
+)
 
 echo %VERSION%> "dist\X-Track\VERSION.txt"
 echo [INFO] Writing README-RELEASE.txt...
@@ -49,14 +53,16 @@ echo [INFO] Writing README-RELEASE.txt...
   echo X-Track %VERSION%
   echo.
   echo 1. Unzip this folder anywhere
-  echo 2. Double-click X-Track.exe
-  echo 3. Select Netscape cookies.txt and a download folder
+  echo 2. Double-click X-Track.exe for downloads
+  echo 3. Or double-click X-Track-Watermark.exe for batch watermarks
+  echo 4. Select Netscape cookies.txt and a download folder in the main app
   echo.
   echo Included:
-  echo - X-Track.exe          GUI
-  echo - gallery-dl.exe       Downloader CLI ^(bundled^)
+  echo - X-Track.exe              Main GUI ^(download + inline watermark^)
+  echo - X-Track-Watermark.exe    Standalone batch watermark tool
+  echo - gallery-dl.exe           Downloader CLI ^(bundled^)
   echo - _internal\resources\fonts          Douyin font
-  echo - data\                created on first run ^(config^)
+  echo - data\                    created on first run ^(config^)
   echo.
   echo FFmpeg ^(watermarks^):
   echo - Not bundled. On first watermark use, the app can install to %%USERPROFILE%%\.xtrack\bin

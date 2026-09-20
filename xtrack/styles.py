@@ -31,12 +31,30 @@ QGroupBox::title {
     background-color: #111827;
 }
 
+QGroupBox::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #475569;
+    border-radius: 3px;
+    background-color: #0F172A;
+    margin-left: 4px;
+}
+
+QGroupBox::indicator:checked {
+    background-color: #0891B2;
+    border-color: #22D3EE;
+}
+
+QGroupBox::indicator:hover {
+    border-color: #22D3EE;
+}
+
 QLabel {
     color: #94A3B8;
     background: transparent;
 }
 
-QLineEdit, QSpinBox, QComboBox {
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
     background-color: #0F172A;
     border: 1px solid #1E293B;
     border-radius: 6px;
@@ -59,11 +77,11 @@ QDateEdit {
     min-height: 28px;
 }
 
-QLineEdit:focus, QSpinBox:focus, QDateEdit:focus, QComboBox:focus {
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QDateEdit:focus, QComboBox:focus {
     border: 1px solid #22D3EE;
 }
 
-QLineEdit:disabled, QSpinBox:disabled, QDateEdit:disabled, QComboBox:disabled {
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QDateEdit:disabled, QComboBox:disabled {
     background-color: #0B1220;
     color: #475569;
     border-color: #1E293B;

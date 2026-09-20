@@ -6,7 +6,7 @@
 
 A Windows desktop GUI for gallery-dl — batch downloads from **X (Twitter)** (and other gallery-dl sites) with per-URL date/type filters, parallel jobs, pause/resume, and inline FFmpeg watermarks.
 
-**Version:** 1.0.0 · **License:** [GPL-2.0](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
+**Version:** 1.0.1 · **License:** [GPL-2.0](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ---
 
@@ -18,6 +18,7 @@ A Windows desktop GUI for gallery-dl — batch downloads from **X (Twitter)** (a
 - Skip already downloaded items via `--download-archive`
 - Pause / resume / stop
 - Inline watermark (queue size 1; downloads suspend while watermarking)
+- Standalone batch watermark tool (`X-Track-Watermark.exe`)
 - Default text & image watermark: `X-Track水印`
 - Chinese / English UI
 
@@ -28,6 +29,7 @@ A Windows desktop GUI for gallery-dl — batch downloads from **X (Twitter)** (a
 - 每个 URL 独立设置日期区间与媒体类型
 - archive 增量跳过、暂停 / 继续 / 停止
 - 边下边串行加水印（等待队列最多 1）
+- 独立批量水印工具（`X-Track-Watermark.exe`）
 - 中英文界面
 
 ---
@@ -35,16 +37,16 @@ A Windows desktop GUI for gallery-dl — batch downloads from **X (Twitter)** (a
 ## Download (Windows one-click)
 
 1. Open [Releases](https://github.com/KingVk/X-Track/releases)
-2. Download `X-Track-1.0.0-windows.zip`
-3. Unzip and run `X-Track.exe` (keep the whole folder, including `_internal/` and `gallery-dl.exe`)
+2. Download `X-Track-1.0.1-windows.zip`
+3. Unzip and run `X-Track.exe` (keep the whole folder, including `_internal/` and `gallery-dl.exe`). Batch watermark tool: `X-Track-Watermark.exe`.
 
 First run may be blocked by SmartScreen — choose **More info → Run anyway**.
 
 ### 一键包
 
 1. 打开 [Releases](https://github.com/KingVk/X-Track/releases)
-2. 下载 `X-Track-1.0.0-windows.zip`
-3. 解压后运行 `X-Track.exe`（勿只拷贝单个 exe）
+2. 下载 `X-Track-1.0.1-windows.zip`
+3. 解压后运行 `X-Track.exe`（勿只拷贝单个 exe）。批量水印工具：`X-Track-Watermark.exe`。
 
 ---
 
@@ -73,7 +75,7 @@ Cookies: export a Netscape `cookies.txt` (e.g. browser extension “Get cookies.
 scripts\build_release.bat
 ```
 
-Outputs `release/X-Track-1.0.0-windows.zip` (upload to GitHub Releases; do not commit the zip).
+Outputs `release/X-Track-1.0.1-windows.zip` (upload to GitHub Releases; do not commit the zip).
 
 Tag-triggered CI recipe is saved as `docs/release-workflow.yml` (copy to `.github/workflows/` if your token has the `workflow` scope).
 

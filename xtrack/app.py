@@ -6,6 +6,10 @@ from . import __version__
 
 
 def main():
+    if "--wmtool" in sys.argv:
+        from .wmtool import main as wmtool_main
+        wmtool_main()
+        return
     app = QApplication(sys.argv)
     app.setApplicationName("X-Track")
     app.setApplicationDisplayName(f"X-Track {__version__}")

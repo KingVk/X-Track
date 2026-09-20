@@ -146,6 +146,11 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
+        tools_menu = menubar.addMenu(t("tools"))
+        wmtool_action = QAction(t("wmtool_menu"), self)
+        wmtool_action.triggered.connect(self._open_wmtool)
+        tools_menu.addAction(wmtool_action)
+
         lang_menu = menubar.addMenu(t("language"))
         self.lang_action_group = []
         for lang in self.i18n.get_available_langs():
@@ -158,6 +163,18 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda checked, l=lang: self._change_language(l))
             lang_menu.addAction(action)
             self.lang_action_group.append(action)
+
+    def _open_wmtool(self):
+        from .wmtool_window import WatermarkToolWindow
+
+        win = getattr(self, "_wmtool_window", None)
+        if win is None:
+            win = WatermarkToolWindow()
+            self._wmtool_window = win
+        win.apply_i18n()
+        win.show()
+        win.raise_()
+        win.activateWindow()
 
     def _create_account_status_bar(self):
         """Status chips + settings gear in the menu bar top-right."""
@@ -312,6 +329,8 @@ class MainWindow(QMainWindow):
         self.url_group.setTitle(t("url_list"))
         self.log_group.setTitle(t("log_output"))
         self.start_btn.setText(t("start"))
+        if hasattr(self, "wmtool_btn"):
+            self.wmtool_btn.setText(t("wmtool_menu"))
         if hasattr(self, "check_deps_btn"):
             self.check_deps_btn.setText(t("check_deps"))
             self.check_deps_btn.setToolTip(t("check_deps_tip"))
@@ -366,6 +385,9 @@ class MainWindow(QMainWindow):
         self._update_url_table()
         self._create_menu_bar()
         self._create_account_status_bar()
+        tool = getattr(self, "_wmtool_window", None)
+        if tool is not None:
+            tool.apply_i18n()
         if hasattr(self, "check_deps_btn"):
             self.check_deps_btn.setText(t("check_deps"))
             self.check_deps_btn.setToolTip(t("check_deps_tip"))
@@ -709,6 +731,11 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 2, 0, 2)
         layout.setSpacing(8)
+
+        self.wmtool_btn = QPushButton(t("wmtool_menu"))
+        self.wmtool_btn.setMinimumSize(108, 34)
+        self.wmtool_btn.clicked.connect(self._open_wmtool)
+        layout.addWidget(self.wmtool_btn)
 
         self.watermark_progress = QProgressBar()
         self.watermark_progress.setVisible(False)
