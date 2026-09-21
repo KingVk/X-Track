@@ -741,10 +741,11 @@ class BatchWatermarker:
             return cmd
 
         fade = max(0.0, float(job.fade_sec))
-        # Loop still only when we can cap with -t. Global -shortest is unsafe:
-        # a shorter audio track would truncate the video.
-        fade_tone = is_video and fade >= 0.05 and job.placement == "fixed"
+        # Loop the still whenever duration is known, and cap with -t.
+        # Global -shortest is unsafe: a shorter audio track would truncate the video.
+        # geq fade uses the looped still's clock, so fixed / corners / random can all fade.
         loop_still = is_video and src_dur > 0
+        fade_tone = loop_still and fade >= 0.05
         cmd.extend(["-i", src])
         if loop_still:
             cmd.extend(["-framerate", "15", "-loop", "1"])
