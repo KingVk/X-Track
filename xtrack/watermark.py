@@ -45,21 +45,177 @@ _GPU_ENCODERS = (
     {
         "name": "h264_nvenc",
         "label": "NVIDIA NVENC",
-        "args": ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "23", "-b:v", "0"],
     },
     {
         "name": "h264_amf",
         "label": "AMD AMF",
-        "args": ["-c:v", "h264_amf", "-quality", "balanced", "-rc", "cqp", "-qp_i", "23", "-qp_p", "23"],
     },
     {
         "name": "h264_qsv",
         "label": "Intel QSV",
-        "args": ["-c:v", "h264_qsv", "-global_quality", "23"],
     },
 )
 
-_CPU_VIDEO_ARGS = ["-c:v", "libx264", "-preset", "medium", "-crf", "23"]
+# Fallback only when bitrate probe fails — prefer video_encode_args() with a target.
+_CPU_VIDEO_ARGS = ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p"]
+
+
+def probe_media(ffmpeg: str, path: str) -> dict:
+    """Probe duration / size / stream bitrates from ffmpeg -i stderr."""
+    info = {
+        "duration": 0.0,
+        "width": 0,
+        "height": 0,
+        "file_kbps": 0,
+        "video_kbps": 0,
+        "audio_kbps": 0,
+    }
+    if not path or not os.path.isfile(path):
+        return info
+    try:
+        result = subprocess.run(
+            [ffmpeg, "-hide_banner", "-i", path],
+            capture_output=True,
+            timeout=45,
+            **no_window_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return info
+    blob = (result.stderr or b"").decode("utf-8", "replace")
+    dur = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", blob)
+    if dur:
+        hours, minutes, seconds = dur.groups()
+        info["duration"] = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    file_br = re.search(r"bitrate:\s*(\d+)\s*kb/s", blob)
+    if file_br:
+        info["file_kbps"] = int(file_br.group(1))
+    # Prefer per-stream rates. Stream headers vary: "#0:0:", "#0:0(und):", "#0:0[0x1](und):".
+    for match in re.finditer(
+        r"Stream\s+#\d+:\d+[^:]*:\s*Video:\s*[^\n]*?(\d+)\s*kb/s",
+        blob,
+    ):
+        info["video_kbps"] = int(match.group(1))
+        break
+    for match in re.finditer(
+        r"Stream\s+#\d+:\d+[^:]*:\s*Audio:\s*[^\n]*?(\d+)\s*kb/s",
+        blob,
+    ):
+        info["audio_kbps"] = int(match.group(1))
+        break
+    dims = re.search(r"Video:\s*[^\n]*?,\s*(\d{2,5})x(\d{2,5})", blob)
+    if dims:
+        info["width"] = int(dims.group(1))
+        info["height"] = int(dims.group(2))
+    if info["video_kbps"] <= 0 and info["file_kbps"] > 0:
+        # Container bitrate minus audio ≈ video.
+        info["video_kbps"] = max(0, info["file_kbps"] - max(0, info["audio_kbps"]))
+    if info["video_kbps"] <= 0 and info["duration"] >= 0.5:
+        try:
+            size = os.path.getsize(path)
+            info["video_kbps"] = max(1, int(size * 8 / 1000.0 / info["duration"]) - max(0, info["audio_kbps"]))
+        except OSError:
+            pass
+    return info
+
+
+def target_video_kbps(video_kbps: int, width: int = 0, height: int = 0) -> int:
+    """Pick an encode target near the source rate so size stays stable and quality holds."""
+    pixels = max(0, int(width)) * max(0, int(height))
+    if pixels <= 640 * 480:
+        floor_kbps, cap_kbps = 350, 2500
+    elif pixels <= 1280 * 720:
+        floor_kbps, cap_kbps = 500, 5000
+    elif pixels <= 1920 * 1080:
+        floor_kbps, cap_kbps = 800, 9000
+    elif pixels <= 2560 * 1600:
+        floor_kbps, cap_kbps = 1200, 14000
+    else:
+        floor_kbps, cap_kbps = 1800, 20000
+
+    src = max(0, int(video_kbps))
+    if src <= 0:
+        # Unknown source: aim mid-band for the resolution.
+        return max(floor_kbps, min(cap_kbps, (floor_kbps + cap_kbps) // 3))
+    # Slight headroom for the overlay without ballooning low-bitrate social clips.
+    target = int(round(src * 1.08))
+    return max(floor_kbps, min(cap_kbps, target))
+
+
+def video_encode_args(encoder: str, target_kbps: int) -> List[str]:
+    """Bitrate-aware H.264 args. Fixed CRF/CQ alone balloons small sources or softens large ones."""
+    name = (encoder or "libx264").strip() or "libx264"
+    target = max(200, int(target_kbps or 0))
+    maxrate = max(target + 50, int(round(target * 1.25)))
+    bufsize = max(maxrate, int(round(target * 2.0)))
+    br = f"{target}k"
+    mr = f"{maxrate}k"
+    bs = f"{bufsize}k"
+
+    if name == "h264_nvenc":
+        return [
+            "-c:v",
+            "h264_nvenc",
+            "-preset",
+            "p5",
+            "-rc",
+            "vbr",
+            "-b:v",
+            br,
+            "-maxrate",
+            mr,
+            "-bufsize",
+            bs,
+            "-cq",
+            "19",
+            "-pix_fmt",
+            "yuv420p",
+        ]
+    if name == "h264_amf":
+        return [
+            "-c:v",
+            "h264_amf",
+            "-quality",
+            "quality",
+            "-rc",
+            "vbr_peak",
+            "-b:v",
+            br,
+            "-maxrate",
+            mr,
+            "-bufsize",
+            bs,
+            "-pix_fmt",
+            "yuv420p",
+        ]
+    if name == "h264_qsv":
+        return [
+            "-c:v",
+            "h264_qsv",
+            "-b:v",
+            br,
+            "-maxrate",
+            mr,
+            "-bufsize",
+            bs,
+            "-look_ahead",
+            "1",
+            "-pix_fmt",
+            "nv12",
+        ]
+    return [
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-b:v",
+        br,
+        "-maxrate",
+        mr,
+        "-bufsize",
+        bs,
+        "-pix_fmt",
+        "yuv420p",
+    ]
 
 
 DEFAULT_WATERMARK_NAME = "default_watermark.png"
@@ -281,7 +437,7 @@ class WatermarkProcessor:
                     "mode": "gpu",
                     "label": enc["label"],
                     "encoder": enc["name"],
-                    "args": list(enc["args"]),
+                    "args": video_encode_args(enc["name"], 4000),
                 }
                 return self._accel
 
@@ -518,10 +674,12 @@ class WatermarkProcessor:
             cmd.extend(["-hwaccel", "auto"])
         cmd.extend(["-i", input_path, "-i", watermark_path, "-filter_complex", filter_complex])
         if is_video:
+            media = probe_media(self.ffmpeg_cmd, input_path)
+            target = target_video_kbps(media["video_kbps"], media["width"], media["height"])
             if use_gpu and accel["mode"] == "gpu" and ext in H264_VIDEO_EXTS:
-                cmd.extend(accel["args"])
+                cmd.extend(video_encode_args(str(accel.get("encoder") or "libx264"), target))
             else:
-                cmd.extend(_CPU_VIDEO_ARGS)
+                cmd.extend(video_encode_args("libx264", target))
             cmd.extend(["-codec:a", "copy"])
         cmd.append(output_path)
         return cmd
@@ -542,10 +700,12 @@ class WatermarkProcessor:
             cmd.extend(["-hwaccel", "auto"])
         cmd.extend(["-i", input_path, "-vf", vf])
         if is_video:
+            media = probe_media(self.ffmpeg_cmd, input_path)
+            target = target_video_kbps(media["video_kbps"], media["width"], media["height"])
             if use_gpu and accel["mode"] == "gpu" and ext in H264_VIDEO_EXTS:
-                cmd.extend(accel["args"])
+                cmd.extend(video_encode_args(str(accel.get("encoder") or "libx264"), target))
             else:
-                cmd.extend(_CPU_VIDEO_ARGS)
+                cmd.extend(video_encode_args("libx264", target))
             cmd.extend(["-codec:a", "copy"])
         cmd.append(output_path)
         return cmd

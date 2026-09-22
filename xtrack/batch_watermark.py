@@ -26,6 +26,9 @@ from .watermark import (
     _escape_drawtext,
     _escape_fontfile,
     find_douyin_font,
+    probe_media,
+    target_video_kbps,
+    video_encode_args,
 )
 
 ProgressCb = Callable[[int, int, str, str, str], None]
@@ -408,11 +411,11 @@ def _image_encode(ext: str) -> List[str]:
     return []
 
 
-def _video_encode(ext: str, use_gpu: bool, accel: dict, audio: str) -> List[str]:
+def _video_encode(ext: str, use_gpu: bool, accel: dict, audio: str, target_kbps: int = 0) -> List[str]:
+    encoder = "libx264"
     if use_gpu and accel.get("mode") == "gpu" and ext in H264_VIDEO_EXTS:
-        args = list(accel.get("args") or [])
-    else:
-        args = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"]
+        encoder = str(accel.get("encoder") or "libx264")
+    args = video_encode_args(encoder, target_kbps)
     if audio == "aac":
         args.extend(["-c:a", "aac", "-b:a", "160k"])
     else:
@@ -432,26 +435,7 @@ def _stderr_text(raw: bytes) -> str:
 
 def _probe_duration(ffmpeg: str, path: str) -> float:
     """Return media duration in seconds, or 0 if unknown."""
-    if not path or not os.path.isfile(path):
-        return 0.0
-    try:
-        result = subprocess.run(
-            [ffmpeg, "-hide_banner", "-i", path],
-            capture_output=True,
-            timeout=45,
-            **no_window_kwargs(),
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return 0.0
-    blob = (result.stderr or b"").decode("utf-8", "replace")
-    match = re.search(
-        r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)",
-        blob,
-    )
-    if not match:
-        return 0.0
-    hours, minutes, seconds = match.groups()
-    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    return float(probe_media(ffmpeg, path).get("duration") or 0.0)
 
 
 def _file_digest(path: str) -> str:
@@ -677,16 +661,28 @@ class BatchWatermarker:
             attempts = [(False, "copy")]
 
         last = "ffmpeg failed"
-        src_dur = _probe_duration(self._processor.ffmpeg_cmd or "ffmpeg", src) if is_video else 0.0
+        ffmpeg = self._processor.ffmpeg_cmd or "ffmpeg"
+        media = probe_media(ffmpeg, src) if is_video else {}
+        src_dur = float(media.get("duration") or 0.0) if is_video else 0.0
+        target_kbps = (
+            target_video_kbps(
+                int(media.get("video_kbps") or 0),
+                int(media.get("width") or 0),
+                int(media.get("height") or 0),
+            )
+            if is_video
+            else 0
+        )
         for use_gpu, audio in attempts:
             if cancel.is_set():
                 return "cancelled", ""
-            cmd = self._command(job, src, dest, font, is_video, use_gpu, accel, audio, src_dur)
+            cmd = self._command(
+                job, src, dest, font, is_video, use_gpu, accel, audio, src_dur, target_kbps
+            )
             status, detail = _run_ffmpeg(cmd, cancel)
             if status == "cancelled":
                 return "cancelled", ""
             if status == "ok" and os.path.isfile(dest):
-                ffmpeg = self._processor.ffmpeg_cmd or "ffmpeg"
                 if is_video:
                     if _video_output_ok(src, dest, src_dur, ffmpeg):
                         return "ok", ""
@@ -717,6 +713,7 @@ class BatchWatermarker:
         accel: dict,
         audio: str,
         src_dur: float = 0.0,
+        target_kbps: int = 0,
     ) -> List[str]:
         # Always refresh ffmpeg path in case the user just configured it.
         self._processor.ffmpeg_cmd = self._processor._find_ffmpeg()
@@ -731,7 +728,7 @@ class BatchWatermarker:
             cmd.extend(["-i", src, "-filter_complex", f"[0:v]{vf}[vout]", "-map", "[vout]"])
             if is_video:
                 cmd.extend(["-map", "0:a?"])
-                cmd.extend(_video_encode(ext, use_gpu, accel, audio))
+                cmd.extend(_video_encode(ext, use_gpu, accel, audio, target_kbps))
                 if src_dur > 0:
                     cmd.extend(["-t", f"{src_dur:.3f}"])
             else:
@@ -761,7 +758,7 @@ class BatchWatermarker:
         )
         if is_video:
             cmd.extend(["-map", "0:a?"])
-            cmd.extend(_video_encode(ext, use_gpu, accel, audio))
+            cmd.extend(_video_encode(ext, use_gpu, accel, audio, target_kbps))
             if src_dur > 0:
                 cmd.extend(["-t", f"{src_dur:.3f}"])
         else:
