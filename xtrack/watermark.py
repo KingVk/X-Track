@@ -150,6 +150,8 @@ def video_encode_args(encoder: str, target_kbps: int) -> List[str]:
     br = f"{target}k"
     mr = f"{maxrate}k"
     bs = f"{bufsize}k"
+    # First output frame is a keyframe so posters / scrubbers land on the real start.
+    keyframe_at_start = ["-force_key_frames", "0"]
 
     if name == "h264_nvenc":
         return [
@@ -169,7 +171,7 @@ def video_encode_args(encoder: str, target_kbps: int) -> List[str]:
             "19",
             "-pix_fmt",
             "yuv420p",
-        ]
+        ] + keyframe_at_start
     if name == "h264_amf":
         return [
             "-c:v",
@@ -186,7 +188,7 @@ def video_encode_args(encoder: str, target_kbps: int) -> List[str]:
             bs,
             "-pix_fmt",
             "yuv420p",
-        ]
+        ] + keyframe_at_start
     if name == "h264_qsv":
         return [
             "-c:v",
@@ -201,7 +203,7 @@ def video_encode_args(encoder: str, target_kbps: int) -> List[str]:
             "1",
             "-pix_fmt",
             "nv12",
-        ]
+        ] + keyframe_at_start
     return [
         "-c:v",
         "libx264",
@@ -215,7 +217,90 @@ def video_encode_args(encoder: str, target_kbps: int) -> List[str]:
         bs,
         "-pix_fmt",
         "yuv420p",
-    ]
+    ] + keyframe_at_start
+
+
+def embed_leading_cover(ffmpeg: str, path: str) -> bool:
+    """Embed t≈0 as the MP4/MOV attached cover so file posters show the start frame."""
+    if not path or not os.path.isfile(path):
+        return False
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in (".mp4", ".m4v", ".mov"):
+        return False
+    ffmpeg = ffmpeg or "ffmpeg"
+    cover = path + ".cover.jpg"
+    staged = path + ".cover.mp4"
+    try:
+        grab = subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-ss",
+                "0",
+                "-i",
+                path,
+                "-frames:v",
+                "1",
+                "-q:v",
+                "2",
+                cover,
+            ],
+            capture_output=True,
+            timeout=60,
+            **no_window_kwargs(),
+        )
+        if grab.returncode != 0 or not os.path.isfile(cover) or os.path.getsize(cover) < 32:
+            return False
+        # Drop any existing attached pics, then attach the leading frame as cover.
+        mux = subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                path,
+                "-i",
+                cover,
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a?",
+                "-map",
+                "1:v:0",
+                "-c",
+                "copy",
+                "-c:v:1",
+                "mjpeg",
+                "-disposition:v:0",
+                "0",
+                "-disposition:v:1",
+                "attached_pic",
+                "-movflags",
+                "+faststart",
+                staged,
+            ],
+            capture_output=True,
+            timeout=120,
+            **no_window_kwargs(),
+        )
+        if mux.returncode != 0 or not os.path.isfile(staged) or os.path.getsize(staged) < 1024:
+            return False
+        os.replace(staged, path)
+        return True
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    finally:
+        for temp in (cover, staged):
+            if os.path.isfile(temp):
+                try:
+                    os.remove(temp)
+                except OSError:
+                    pass
 
 
 DEFAULT_WATERMARK_NAME = "default_watermark.png"
@@ -871,6 +956,8 @@ class WatermarkProcessor:
             os.replace(output_path, input_path)
         except OSError as e:
             return False, str(e)
+        if ext in VIDEO_EXTS:
+            embed_leading_cover(self.ffmpeg_cmd or "ffmpeg", input_path)
         return True, f"ok ({accel['label']})"
 
     def _run_one(

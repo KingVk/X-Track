@@ -404,6 +404,18 @@ class WatermarkToolWindow(QMainWindow):
         self.pad_spin.setRange(0, 100)
         self.pad_spin.setValue(20)
         self.pad_spin.setSuffix(" %")
+        self.skip_start_label = QLabel()
+        self.skip_start_spin = QDoubleSpinBox()
+        self.skip_start_spin.setRange(0.0, 3600.0)
+        self.skip_start_spin.setSingleStep(0.5)
+        self.skip_start_spin.setDecimals(1)
+        self.skip_start_spin.setValue(0.0)
+        self.skip_end_label = QLabel()
+        self.skip_end_spin = QDoubleSpinBox()
+        self.skip_end_spin.setRange(0.0, 3600.0)
+        self.skip_end_spin.setSingleStep(0.5)
+        self.skip_end_spin.setDecimals(1)
+        self.skip_end_spin.setValue(0.0)
         for col, (label, widget) in enumerate(
             (
                 (self.scale_label, self.scale_spin),
@@ -415,6 +427,10 @@ class WatermarkToolWindow(QMainWindow):
             opt.addWidget(widget, 0, col * 2 + 1)
         opt.addWidget(self.pad_label, 1, 0)
         opt.addWidget(self.pad_spin, 1, 1)
+        opt.addWidget(self.skip_start_label, 1, 2)
+        opt.addWidget(self.skip_start_spin, 1, 3)
+        opt.addWidget(self.skip_end_label, 1, 4)
+        opt.addWidget(self.skip_end_spin, 1, 5)
         mark.addLayout(opt)
         self.hint_label = QLabel()
         self.hint_label.setWordWrap(True)
@@ -564,6 +580,12 @@ class WatermarkToolWindow(QMainWindow):
         self.fade_spin.setToolTip(t("wmtool_fade_tip"))
         self.pad_label.setText(t("wmtool_pad"))
         self.pad_spin.setToolTip(t("wmtool_pad_tip"))
+        self.skip_start_label.setText(t("wmtool_skip_start"))
+        self.skip_start_spin.setSuffix(t("wmtool_suffix_sec"))
+        self.skip_start_spin.setToolTip(t("wmtool_skip_start_tip"))
+        self.skip_end_label.setText(t("wmtool_skip_end"))
+        self.skip_end_spin.setSuffix(t("wmtool_suffix_sec"))
+        self.skip_end_spin.setToolTip(t("wmtool_skip_end_tip"))
         self.hint_label.setText(t("wmtool_hint"))
         self.place_fixed.setText(t("wmtool_fixed"))
         self.place_corners.setText(t("wmtool_corners"))
@@ -688,6 +710,8 @@ class WatermarkToolWindow(QMainWindow):
             pad_percent=float(self.pad_spin.value()),
             opacity=self.opacity_spin.value() / 100.0,
             fade_sec=float(self.fade_spin.value()),
+            skip_start_sec=float(self.skip_start_spin.value()),
+            skip_end_sec=float(self.skip_end_spin.value()),
             placement=placement,
             fixed_position=position,
             refresh_sec=float(self.refresh_spin.value()),
@@ -926,6 +950,12 @@ class WatermarkToolWindow(QMainWindow):
         self.pad_spin.setValue(int(data.get("pad_percent") if data.get("pad_percent") is not None else 20))
         self.opacity_spin.setValue(int(data.get("opacity") or 85))
         self.fade_spin.setValue(float(data.get("fade_sec") if data.get("fade_sec") is not None else 0.4))
+        self.skip_start_spin.setValue(
+            float(data.get("skip_start_sec") if data.get("skip_start_sec") is not None else 0.0)
+        )
+        self.skip_end_spin.setValue(
+            float(data.get("skip_end_sec") if data.get("skip_end_sec") is not None else 0.0)
+        )
         placement = str(data.get("placement") or "fixed")
         if placement == "corners":
             self.place_corners.setChecked(True)
@@ -967,6 +997,8 @@ class WatermarkToolWindow(QMainWindow):
             "pad_percent": int(job.pad_percent),
             "opacity": int(round(job.opacity * 100)),
             "fade_sec": job.fade_sec,
+            "skip_start_sec": job.skip_start_sec,
+            "skip_end_sec": job.skip_end_sec,
             "placement": job.placement,
             "fixed_position": job.fixed_position,
             "refresh_sec": int(job.refresh_sec),

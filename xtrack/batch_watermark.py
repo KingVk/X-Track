@@ -25,6 +25,7 @@ from .watermark import (
     WatermarkProcessor,
     _escape_drawtext,
     _escape_fontfile,
+    embed_leading_cover,
     find_douyin_font,
     probe_media,
     target_video_kbps,
@@ -102,6 +103,8 @@ class BatchJob:
     pad_percent: float = 20.0  # margin as % of watermark width
     opacity: float = 0.8
     fade_sec: float = 0.4
+    skip_start_sec: float = 0.0  # video: no watermark for the first N seconds
+    skip_end_sec: float = 0.0  # video: no watermark for the last N seconds
     placement: str = "fixed"  # fixed | corners | random
     fixed_position: str = "bottom-right"
     refresh_sec: float = 4.0
@@ -262,13 +265,41 @@ def _random_xy(kind: str, job: BatchJob, path: str, is_video: bool) -> Tuple[str
     return x, y
 
 
+def _skip_window(job: BatchJob, duration: float) -> Tuple[float, float]:
+    """Return [start, end) timeline where the watermark is allowed on video."""
+    start = max(0.0, float(getattr(job, "skip_start_sec", 0.0) or 0.0))
+    end_skip = max(0.0, float(getattr(job, "skip_end_sec", 0.0) or 0.0))
+    if duration > 0.05:
+        end = max(0.0, float(duration) - end_skip)
+        if end < start:
+            end = start
+        return start, end
+    # Duration unknown: honor start skip only; end skip needs a known length.
+    return start, 1_000_000.0
+
+
+def _enable_expr(job: BatchJob, is_video: bool, duration: float) -> str:
+    if not is_video:
+        return ""
+    start, end = _skip_window(job, duration)
+    end_skip = max(0.0, float(getattr(job, "skip_end_sec", 0.0) or 0.0))
+    if start <= 0.0 and end_skip <= 0.0:
+        return ""
+    return _esc(f"between(t,{start:.3f},{end:.3f})")
+
+
 def _alpha_expr(job: BatchJob, is_video: bool) -> str:
     opacity = max(0.02, min(1.0, float(job.opacity)))
     fade = max(0.0, float(job.fade_sec))
     if not is_video or fade < 0.05:
         return f"{opacity:.3f}"
+    start = max(0.0, float(getattr(job, "skip_start_sec", 0.0) or 0.0))
     if job.placement == "fixed":
-        return _esc(f"{opacity:.3f}*if(lt(t,{fade:.3f}),t/{fade:.3f},1)")
+        # Fade after the watermark window opens (not from absolute t=0).
+        return _esc(
+            f"{opacity:.3f}*if(lt(t-{start:.3f},{fade:.3f}),"
+            f"max(0,(t-{start:.3f})/{fade:.3f}),1)"
+        )
     step = max(0.5, float(job.refresh_sec))
     fade = min(fade, step / 2.0 - 0.05)
     if fade < 0.05:
@@ -307,16 +338,17 @@ def _drawtext_one(
     )
 
 
-def _text_filter(job: BatchJob, path: str, is_video: bool, font: str) -> str:
+def _text_filter(job: BatchJob, path: str, is_video: bool, font: str, duration: float = 0.0) -> str:
     ratio = max(1, min(50, int(job.scale_percent)))
     # Font size ≈ short-side * ratio% (same visual share as image watermarks).
     # Pass raw commas into _esc once — do not pre-escape.
     fontsize = _esc(f"max(16,min(w,h)*{ratio}/100)")
     alpha = _alpha_expr(job, is_video)
+    enable = _enable_expr(job, is_video, duration)
 
     if job.placement == "corners" and is_video:
         x, y = _corner_xy_expr("text", job.pad_percent, job.refresh_sec)
-        return _drawtext_one(job, font, fontsize, x, y, alpha)
+        return _drawtext_one(job, font, fontsize, x, y, alpha, enable)
 
     if job.placement == "random":
         x, y = _random_xy("text", job, path, is_video)
@@ -324,7 +356,7 @@ def _text_filter(job: BatchJob, path: str, is_video: bool, font: str) -> str:
         x, y = _fixed_xy("text", _hash_corner(path), job.pad_percent)
     else:
         x, y = _fixed_xy("text", job.fixed_position, job.pad_percent)
-    return _drawtext_one(job, font, fontsize, x, y, alpha)
+    return _drawtext_one(job, font, fontsize, x, y, alpha, enable)
 
 
 def _geq_fade(job: BatchJob) -> str:
@@ -332,8 +364,12 @@ def _geq_fade(job: BatchJob) -> str:
     opacity = max(0.02, min(1.0, float(job.opacity)))
     fade = max(0.0, float(job.fade_sec))
     clock = "T"
+    start = max(0.0, float(getattr(job, "skip_start_sec", 0.0) or 0.0))
     if job.placement == "fixed":
-        inner = f"{opacity:.3f}*if(lt({clock},{fade:.3f}),{clock}/{fade:.3f},1)"
+        inner = (
+            f"{opacity:.3f}*if(lt({clock}-{start:.3f},{fade:.3f}),"
+            f"max(0,({clock}-{start:.3f})/{fade:.3f}),1)"
+        )
     else:
         step = max(0.5, float(job.refresh_sec))
         fade = min(fade, step / 2.0 - 0.05)
@@ -350,7 +386,13 @@ def _geq_fade(job: BatchJob) -> str:
     )
 
 
-def _image_filter(job: BatchJob, path: str, is_video: bool, fade_tone: bool) -> str:
+def _image_filter(
+    job: BatchJob,
+    path: str,
+    is_video: bool,
+    fade_tone: bool,
+    duration: float = 0.0,
+) -> str:
     ratio = max(1, min(50, int(job.scale_percent)))
     # Match text-mode semantics: scale% ≈ glyph height on the short side.
     # Width = height * mdar; cap so the mark never exceeds the frame.
@@ -372,7 +414,8 @@ def _image_filter(job: BatchJob, path: str, is_video: bool, fade_tone: bool) -> 
     # Never use overlay shortest=1: without a reliable loop it truncates the
     # whole video to one still frame (~tens of KB) while ffmpeg still exits 0.
     # Looped stills are capped with -t <source duration> in _command instead.
-    end_flags = "eof_action=repeat"
+    enable = _enable_expr(job, is_video, duration)
+    end_flags = f"enable='{enable}':eof_action=repeat" if enable else "eof_action=repeat"
 
     if job.placement == "corners" and is_video:
         # One overlay with time-based x/y — avoids split+enable graphs that some
@@ -685,6 +728,8 @@ class BatchWatermarker:
             if status == "ok" and os.path.isfile(dest):
                 if is_video:
                     if _video_output_ok(src, dest, src_dur, ffmpeg):
+                        # Poster / file thumbnail = first frame of the output.
+                        embed_leading_cover(ffmpeg, dest)
                         return "ok", ""
                     detail = detail or "output too small or truncated"
                     try:
@@ -724,7 +769,7 @@ class BatchWatermarker:
             # Prefer hardware decode when a GPU encoder is available; filters still run on CPU.
             cmd.extend(["-hwaccel", "auto"])
         if job.kind == "text":
-            vf = _text_filter(job, src, is_video, font)
+            vf = _text_filter(job, src, is_video, font, src_dur)
             cmd.extend(["-i", src, "-filter_complex", f"[0:v]{vf}[vout]", "-map", "[vout]"])
             if is_video:
                 cmd.extend(["-map", "0:a?"])
@@ -751,7 +796,7 @@ class BatchWatermarker:
                 "-i",
                 job.image_path,
                 "-filter_complex",
-                _image_filter(job, src, is_video, fade_tone),
+                _image_filter(job, src, is_video, fade_tone, src_dur),
                 "-map",
                 "[vout]",
             ]
