@@ -46,11 +46,19 @@ class CommandBuilder:
         if cookies_file and os.path.isfile(cookies_file):
             cmd.extend(["--cookies", cookies_file])
 
-        if config.sleep_min and config.sleep_max:
-            cmd.extend(["--sleep", f"{config.sleep_min}-{config.sleep_max}"])
+        sleep_lo = int(getattr(config, "sleep_min", 0) or 0)
+        sleep_hi = int(getattr(config, "sleep_max", 0) or 0)
+        if sleep_lo or sleep_hi:
+            if sleep_hi < sleep_lo:
+                sleep_lo, sleep_hi = sleep_hi, sleep_lo
+            cmd.extend(["--sleep", f"{sleep_lo}-{sleep_hi}"])
 
-        if config.sleep_request_min and config.sleep_request_max:
-            cmd.extend(["--sleep-request", f"{config.sleep_request_min}-{config.sleep_request_max}"])
+        req_lo = int(getattr(config, "sleep_request_min", 0) or 0)
+        req_hi = int(getattr(config, "sleep_request_max", 0) or 0)
+        if req_lo or req_hi:
+            if req_hi < req_lo:
+                req_lo, req_hi = req_hi, req_lo
+            cmd.extend(["--sleep-request", f"{req_lo}-{req_hi}"])
 
         if config.sleep_429:
             cmd.extend(["--sleep-429", str(config.sleep_429)])

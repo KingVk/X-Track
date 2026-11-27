@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal EnableExtensions
 cd /d "%~dp0.."
 
-set VERSION=1.0.5
+set VERSION=1.0.6
 set OUTDIR=release
 set NAME=X-Track-%VERSION%-windows
 

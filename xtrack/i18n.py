@@ -18,6 +18,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "cookies": "Cookies:",
         "cookies_placeholder": "Select cookies.txt (Netscape format)",
         "cookies_missing_tip": "No cookies file selected. Export cookies.txt from a browser extension.",
+        "cookies_required_title": "Cookies Required",
+        "cookies_required_msg": (
+            "X / Twitter timelines need a logged-in cookies.txt (with auth_token).\n\n"
+            "Without it, gallery-dl fails with AuthRequired and videos/images will not download.\n\n"
+            "Click Open for the setup guide, then select the exported cookies.txt and try again."
+        ),
+        "cookies_auth_failed_tip": (
+            "Hint: AuthRequired — refresh/export a new x.com cookies.txt (must include auth_token) and select it in Settings."
+        ),
         "select_cookies": "Select Cookie File",
         "ffmpeg_path": "ffmpeg Path:",
         "ffmpeg_path_placeholder": "Auto-detect (or pick ffmpeg.exe / its bin folder)",
@@ -352,6 +361,15 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "cookies": "Cookie 文件:",
         "cookies_placeholder": "选择 cookies.txt（Netscape 格式）",
         "cookies_missing_tip": "未选择 Cookie 文件。可用浏览器扩展导出 cookies.txt 后在此指定。",
+        "cookies_required_title": "需要 Cookies",
+        "cookies_required_msg": (
+            "下载 X / Twitter 时间线必须提供已登录的 cookies.txt（需包含 auth_token）。\n\n"
+            "未配置时 gallery-dl 会报 AuthRequired，图片和视频都下不下来。\n\n"
+            "点「打开」查看配置指引，选好 cookies.txt 后再开始下载。"
+        ),
+        "cookies_auth_failed_tip": (
+            "提示：AuthRequired — 请重新导出/刷新 x.com 的 cookies.txt（需含 auth_token），并在设置里选中该文件。"
+        ),
         "select_cookies": "选择 Cookie 文件",
         "ffmpeg_path": "ffmpeg 路径:",
         "ffmpeg_path_placeholder": "自动检测（或选择 ffmpeg.exe / 其所在目录）",

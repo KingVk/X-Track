@@ -47,7 +47,7 @@ from .command_builder import CommandBuilder, CommandExecutor, check_gallery_dl_i
 from .watermark import WatermarkProcessor
 from .watermark_pipeline import DestMediaWatcher, InlineWatermarkPipeline
 from .installer import DependencyInstaller, check_all_dependencies
-from .cookies import cookies_status
+from .cookies import cookies_look_like_x, cookies_status
 from .download_paths import download_archive_path
 from .manifest import update_manifest
 from .optional_date import OptionalDateBox
@@ -1224,10 +1224,22 @@ class MainWindow(QMainWindow):
         self._apply_ffmpeg_path_from_config()
         cfg.write_metadata = self.write_metadata_check.isChecked()
         cfg.write_info_json = self.write_info_json_check.isChecked()
-        cfg.sleep_min = self.sleep_min.value()
-        cfg.sleep_max = self.sleep_max.value()
-        cfg.sleep_request_min = self.sleep_req_min.value()
-        cfg.sleep_request_max = self.sleep_req_max.value()
+        sleep_lo = self.sleep_min.value()
+        sleep_hi = self.sleep_max.value()
+        if sleep_hi < sleep_lo:
+            sleep_lo, sleep_hi = sleep_hi, sleep_lo
+            self.sleep_min.setValue(sleep_lo)
+            self.sleep_max.setValue(sleep_hi)
+        cfg.sleep_min = sleep_lo
+        cfg.sleep_max = sleep_hi
+        req_lo = self.sleep_req_min.value()
+        req_hi = self.sleep_req_max.value()
+        if req_hi < req_lo:
+            req_lo, req_hi = req_hi, req_lo
+            self.sleep_req_min.setValue(req_lo)
+            self.sleep_req_max.setValue(req_hi)
+        cfg.sleep_request_min = req_lo
+        cfg.sleep_request_max = req_hi
         cfg.sleep_429 = self.sleep_429.value()
         cfg.verbose = self.verbose_checkbox.isChecked()
 
@@ -1610,6 +1622,25 @@ class MainWindow(QMainWindow):
             else:
                 return
 
+        cookies_path = (self.config_store.config.cookies_file or "").strip()
+        cookies_ok, _ = cookies_status(cookies_path)
+        needs_x = any(
+            ("x.com" in (u.url or "").lower() or "twitter.com" in (u.url or "").lower())
+            for u in self.config_store.config.urls
+            if getattr(u, "selected", True)
+        )
+        if needs_x and (not cookies_ok or not cookies_look_like_x(cookies_path)):
+            reply = QMessageBox.warning(
+                self,
+                t("cookies_required_title"),
+                t("cookies_required_msg"),
+                QMessageBox.StandardButton.Open
+                | QMessageBox.StandardButton.Cancel,
+            )
+            if reply == QMessageBox.StandardButton.Open:
+                self._show_cookies_setup_guide()
+            return
+
         self.is_running = True
         self.is_paused = False
         self._pause_gate.set()
@@ -1684,11 +1715,16 @@ class MainWindow(QMainWindow):
                 )
             self.signals.log_signal.emit(f"[{self._timestamp()}] {t('command', cmd=' '.join(cmd))}")
 
+            auth_hint = {"hit": False}
+
             def on_output(line):
                 self._wait_while_paused()
                 if not self.is_running:
                     return
                 self.signals.log_signal.emit(line)
+                low = (line or "").lower()
+                if "authrequired" in low or "authenticated cookies needed" in low:
+                    auth_hint["hit"] = True
                 try:
                     self.wm_pipeline.handle_output_line(line)
                 except Exception as e:
@@ -1724,6 +1760,10 @@ class MainWindow(QMainWindow):
                     self.signals.log_signal.emit(
                         f"[{self._timestamp()}] {t('failed_msg', code=code, url=_url)}"
                     )
+                    if auth_hint["hit"]:
+                        self.signals.log_signal.emit(
+                            f"[{self._timestamp()}] {t('cookies_auth_failed_tip')}"
+                        )
                     try:
                         update_manifest(dest, source_url=_url, status=status)
                     except Exception:
