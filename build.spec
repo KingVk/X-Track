@@ -1,11 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for X-Track 1.0.6 (onedir + gallery-dl + watermark tool)."""
+"""PyInstaller spec for X-Track 1.0.7 (onedir + gallery-dl + watermark tool)."""
 
 import os
 from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 
 gdl_datas, gdl_binaries, gdl_hiddenimports = collect_all("gallery_dl")
 
@@ -46,6 +46,7 @@ shared_hidden = [
     "xtrack.manifest",
     "xtrack.optional_date",
     "xtrack.url_utils",
+    "xtrack.updater",
     "gallery_dl",
 ] + list(gdl_hiddenimports)
 

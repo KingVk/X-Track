@@ -255,6 +255,33 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # Batch watermark tool
         "tools": "Tools",
         "wmtool_menu": "Batch Watermark",
+        "check_updates": "Check for Updates",
+        "update_checking": "Checking for updates...",
+        "update_available_title": "Update Available",
+        "update_available_msg": (
+            "A new version is available.\n\n"
+            "Current: {current}\n"
+            "Latest: {latest}\n\n"
+            "{notes}\n\n"
+            "Update now? The app will download, install, and restart automatically."
+        ),
+        "update_yes": "Update Now",
+        "update_no": "Later",
+        "update_up_to_date_title": "Up to Date",
+        "update_up_to_date_msg": "You are already on the latest version ({version}).",
+        "update_error_title": "Update Check Failed",
+        "update_error_msg": "Could not check for updates:\n{error}",
+        "update_downloading_title": "Downloading Update",
+        "update_downloading": "Downloading X-Track {version}…",
+        "update_preparing": "Preparing installer…",
+        "update_apply_failed": "Could not prepare the update:\n{error}",
+        "update_busy_title": "Downloads Running",
+        "update_busy_msg": (
+            "Downloads or watermarks are still running.\n\n"
+            "Stop them before updating? Click Yes to stop and continue the update."
+        ),
+        "update_unsupported": "Auto-update is only available in the Windows release build.",
+        "update_restarting": "Installing update and restarting…",
         "wmtool_title": "Batch Watermark",
         "wmtool_sub": "Add a text or image watermark to every picture and video in a folder. Separate from downloads.",
         "wmtool_source": "Source",
@@ -597,6 +624,33 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         # Batch watermark tool
         "tools": "工具",
         "wmtool_menu": "批量水印",
+        "check_updates": "检查更新",
+        "update_checking": "正在检查更新…",
+        "update_available_title": "发现新版本",
+        "update_available_msg": (
+            "检测到新版本。\n\n"
+            "当前版本：{current}\n"
+            "最新版本：{latest}\n\n"
+            "{notes}\n\n"
+            "是否立即更新？将自动下载、安装并重启。"
+        ),
+        "update_yes": "立即更新",
+        "update_no": "稍后",
+        "update_up_to_date_title": "已是最新",
+        "update_up_to_date_msg": "当前已是最新版本（{version}）。",
+        "update_error_title": "检查更新失败",
+        "update_error_msg": "无法检查更新：\n{error}",
+        "update_downloading_title": "正在下载更新",
+        "update_downloading": "正在下载 X-Track {version}…",
+        "update_preparing": "正在准备安装…",
+        "update_apply_failed": "无法准备更新：\n{error}",
+        "update_busy_title": "任务进行中",
+        "update_busy_msg": (
+            "仍有下载或水印任务在运行。\n\n"
+            "是否先停止任务再继续更新？点「是」将停止任务并继续更新。"
+        ),
+        "update_unsupported": "自动更新仅支持 Windows 正式版安装包。",
+        "update_restarting": "正在安装更新并重启…",
         "wmtool_title": "批量水印",
         "wmtool_sub": "用 ffmpeg 给文件夹里的图片和视频加水印。与下载分开，不会改下载设置。",
         "wmtool_source": "来源",

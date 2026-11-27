@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
     QProgressBar,
+    QProgressDialog,
     QStatusBar,
     QScrollArea,
     QSizePolicy,
@@ -53,6 +54,8 @@ from .manifest import update_manifest
 from .optional_date import OptionalDateBox
 from .url_utils import count_media_for_url
 from .i18n import get_i18n, set_language, t
+from . import __version__
+from . import updater as app_updater
 from .paths import resource_dir
 
 
@@ -63,6 +66,9 @@ class SignalBridge(QObject):
     counts_signal = pyqtSignal(int)
     finished_signal = pyqtSignal()
     deps_done_signal = pyqtSignal(str, bool)  # message, success
+    update_check_done = pyqtSignal(object)  # dict payload from updater thread
+    update_progress = pyqtSignal(str, int)  # message, percent (-1 = indeterminate)
+    update_stage_done = pyqtSignal(object)  # dict: ok/staging or error
 
 
 class MainWindow(QMainWindow):
@@ -93,6 +99,11 @@ class MainWindow(QMainWindow):
         self._pause_gate.set()  # not paused → open
         self.current_index = 0
         self._updating_url_table = False
+        self._update_checking = False
+        self._update_check_manual = False
+        self._update_applying = False
+        self._pending_release = None
+        self._update_progress_dialog: Optional[QProgressDialog] = None
 
         set_language(self.config_store.config.language or "zh")
         self.i18n = get_i18n()
@@ -108,6 +119,9 @@ class MainWindow(QMainWindow):
         self.signals.counts_signal.connect(self._on_url_counts_refresh)
         self.signals.finished_signal.connect(self._on_all_finished)
         self.signals.deps_done_signal.connect(self._on_deps_check_finished)
+        self.signals.update_check_done.connect(self._on_update_check_done)
+        self.signals.update_progress.connect(self._on_update_progress)
+        self.signals.update_stage_done.connect(self._on_update_stage_done)
 
     def _init_ui(self):
         self.setWindowTitle(t("app_title"))
@@ -150,6 +164,9 @@ class MainWindow(QMainWindow):
         wmtool_action = QAction(t("wmtool_menu"), self)
         wmtool_action.triggered.connect(self._open_wmtool)
         tools_menu.addAction(wmtool_action)
+        update_action = QAction(t("check_updates"), self)
+        update_action.triggered.connect(lambda: self.start_update_check(manual=True))
+        tools_menu.addAction(update_action)
 
         lang_menu = menubar.addMenu(t("language"))
         self.lang_action_group = []
@@ -1901,8 +1918,202 @@ class MainWindow(QMainWindow):
         self.watermark_progress.setVisible(False)
         self._append_log(f"[{self._timestamp()}] Watermark: {msg}")
 
-    def closeEvent(self, event):
+    def start_update_check(self, manual: bool = False) -> None:
+        """Check GitHub Releases for a newer build. Silent on auto unless update found."""
+        if self._update_checking or self._update_applying:
+            return
+        if not app_updater.updates_supported():
+            if manual:
+                QMessageBox.information(self, t("app_title"), t("update_unsupported"))
+            return
+        self._update_checking = True
+        self._update_check_manual = bool(manual)
+        if manual:
+            self.status_bar.showMessage(t("update_checking"), 0)
+            self._append_log(f"[{self._timestamp()}] {t('update_checking')}")
+
+        def worker():
+            try:
+                release, status = app_updater.check_for_update(__version__)
+                payload = {
+                    "ok": True,
+                    "status": status,
+                    "manual": self._update_check_manual,
+                    "release": release,
+                    "current": __version__,
+                }
+            except Exception as exc:  # noqa: BLE001
+                payload = {
+                    "ok": False,
+                    "status": "error",
+                    "manual": self._update_check_manual,
+                    "error": str(exc),
+                    "current": __version__,
+                }
+            self.signals.update_check_done.emit(payload)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_check_done(self, payload: object) -> None:
+        self._update_checking = False
+        data = payload if isinstance(payload, dict) else {}
+        manual = bool(data.get("manual"))
+        if hasattr(self, "status_bar"):
+            self.status_bar.clearMessage()
+
+        if not data.get("ok"):
+            if manual:
+                QMessageBox.warning(
+                    self,
+                    t("update_error_title"),
+                    t("update_error_msg", error=data.get("error") or "unknown"),
+                )
+            return
+
+        if data.get("status") == "up_to_date":
+            if manual:
+                QMessageBox.information(
+                    self,
+                    t("update_up_to_date_title"),
+                    t("update_up_to_date_msg", version=data.get("current") or __version__),
+                )
+            return
+
+        release = data.get("release")
+        if not isinstance(release, app_updater.ReleaseInfo):
+            return
+
+        notes = app_updater.short_release_notes(release.notes)
+        msg = t(
+            "update_available_msg",
+            current=data.get("current") or __version__,
+            latest=release.version,
+            notes=notes or "",
+        ).strip()
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle(t("update_available_title"))
+        box.setText(msg)
+        yes = box.addButton(t("update_yes"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(t("update_no"), QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is not yes:
+            return
+        self._begin_update_download(release)
+
+    def _begin_update_download(self, release: app_updater.ReleaseInfo) -> None:
         if self.is_running:
+            reply = QMessageBox.question(
+                self,
+                t("update_busy_title"),
+                t("update_busy_msg"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            try:
+                self.executor.cancel()
+            except Exception:
+                pass
+            self.is_running = False
+
+        self._update_applying = True
+        self._pending_release = release
+        dlg = QProgressDialog(
+            t("update_downloading", version=release.version),
+            None,
+            0,
+            100,
+            self,
+        )
+        dlg.setWindowTitle(t("update_downloading_title"))
+        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dlg.setMinimumDuration(0)
+        dlg.setValue(0)
+        dlg.setCancelButton(None)
+        dlg.show()
+        self._update_progress_dialog = dlg
+        self._append_log(
+            f"[{self._timestamp()}] {t('update_downloading', version=release.version)}"
+        )
+
+        def worker():
+            try:
+                def on_progress(message: str, pct: int) -> None:
+                    self.signals.update_progress.emit(message, pct)
+
+                staging = app_updater.download_and_stage(release, on_progress=on_progress)
+                self.signals.update_stage_done.emit({"ok": True, "staging": staging})
+            except Exception as exc:  # noqa: BLE001
+                self.signals.update_stage_done.emit({"ok": False, "error": str(exc)})
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_progress(self, message: str, pct: int) -> None:
+        dlg = self._update_progress_dialog
+        if dlg is None:
+            return
+        if message:
+            dlg.setLabelText(message)
+        if pct < 0:
+            dlg.setRange(0, 0)
+        else:
+            if dlg.maximum() == 0:
+                dlg.setRange(0, 100)
+            dlg.setValue(min(100, max(0, pct)))
+
+    def _on_update_stage_done(self, payload: object) -> None:
+        data = payload if isinstance(payload, dict) else {}
+        dlg = self._update_progress_dialog
+        if dlg is not None:
+            dlg.close()
+            self._update_progress_dialog = None
+
+        if not data.get("ok"):
+            self._update_applying = False
+            self._pending_release = None
+            QMessageBox.warning(
+                self,
+                t("update_error_title"),
+                t("update_apply_failed", error=data.get("error") or "unknown"),
+            )
+            return
+
+        staging = str(data.get("staging") or "")
+        if not staging or not os.path.isdir(staging):
+            self._update_applying = False
+            QMessageBox.warning(
+                self,
+                t("update_error_title"),
+                t("update_apply_failed", error="staging missing"),
+            )
+            return
+
+        try:
+            self.status_bar.showMessage(t("update_preparing"), 0)
+            script = app_updater.write_apply_script(staging)
+            # Persist settings before restart
+            try:
+                self._collect_config_from_ui()
+                self.config_store.save()
+            except Exception:
+                pass
+            app_updater.launch_apply_script(script)
+            self._append_log(f"[{self._timestamp()}] {t('update_restarting')}")
+            self.status_bar.showMessage(t("update_restarting"), 0)
+            # Skip download-in-progress confirm on forced update restart
+            self.is_running = False
+            QTimer.singleShot(400, QApplication.instance().quit)
+        except Exception as exc:  # noqa: BLE001
+            self._update_applying = False
+            QMessageBox.warning(
+                self,
+                t("update_error_title"),
+                t("update_apply_failed", error=str(exc)),
+            )
+
+    def closeEvent(self, event):
+        if self.is_running and not self._update_applying:
             reply = QMessageBox.question(
                 self,
                 t("confirm_exit"),
