@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal EnableExtensions
 cd /d "%~dp0.."
 
-set VERSION=1.0.7
+set VERSION=1.0.8
 set OUTDIR=release
 set NAME=X-Track-%VERSION%-windows
 
@@ -12,15 +12,13 @@ echo  Build X-Track %VERSION% (PyInstaller)
 echo ========================================
 echo.
 
-python -c "import PyInstaller" >nul 2>&1
+echo [INFO] Ensuring build deps + latest gallery-dl...
+python -m pip install -U "pyinstaller>=6.0" PyQt6 "gallery-dl>=1.32.21"
 if errorlevel 1 (
-  echo [INFO] Installing PyInstaller...
-  python -m pip install -U "pyinstaller>=6.0" PyQt6 gallery-dl
-  if errorlevel 1 (
-    echo [ERROR] Failed to install build deps
-    exit /b 1
-  )
+  echo [ERROR] Failed to install build deps
+  exit /b 1
 )
+python -c "import gallery_dl; print('[INFO] gallery-dl', gallery_dl.__version__)"
 
 echo [INFO] Cleaning old build/dist...
 if exist build rmdir /s /q build

@@ -1733,6 +1733,7 @@ class MainWindow(QMainWindow):
             self.signals.log_signal.emit(f"[{self._timestamp()}] {t('command', cmd=' '.join(cmd))}")
 
             auth_hint = {"hit": False}
+            ondemand_hint = {"hit": False}
 
             def on_output(line):
                 self._wait_while_paused()
@@ -1742,6 +1743,12 @@ class MainWindow(QMainWindow):
                 low = (line or "").lower()
                 if "authrequired" in low or "authenticated cookies needed" in low:
                     auth_hint["hit"] = True
+                if (
+                    "ondemand.s" in low
+                    or "failed to extract 'ondemand" in low
+                    or "failed to extract \"ondemand" in low
+                ):
+                    ondemand_hint["hit"] = True
                 try:
                     self.wm_pipeline.handle_output_line(line)
                 except Exception as e:
@@ -1780,6 +1787,10 @@ class MainWindow(QMainWindow):
                     if auth_hint["hit"]:
                         self.signals.log_signal.emit(
                             f"[{self._timestamp()}] {t('cookies_auth_failed_tip')}"
+                        )
+                    if ondemand_hint["hit"]:
+                        self.signals.log_signal.emit(
+                            f"[{self._timestamp()}] {t('twitter_ondemand_failed_tip')}"
                         )
                     try:
                         update_manifest(dest, source_url=_url, status=status)

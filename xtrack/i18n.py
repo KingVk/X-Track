@@ -27,6 +27,10 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "cookies_auth_failed_tip": (
             "Hint: AuthRequired — refresh/export a new x.com cookies.txt (must include auth_token) and select it in Settings."
         ),
+        "twitter_ondemand_failed_tip": (
+            "Hint: X transaction-key error (ondemand.s … 404) — usually an outdated gallery-dl. "
+            "Update X-Track (or pip install -U \"gallery-dl>=1.32.21\"), refresh cookies, then retry."
+        ),
         "select_cookies": "Select Cookie File",
         "ffmpeg_path": "ffmpeg Path:",
         "ffmpeg_path_placeholder": "Auto-detect (or pick ffmpeg.exe / its bin folder)",
@@ -396,6 +400,10 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         ),
         "cookies_auth_failed_tip": (
             "提示：AuthRequired — 请重新导出/刷新 x.com 的 cookies.txt（需含 auth_token），并在设置里选中该文件。"
+        ),
+        "twitter_ondemand_failed_tip": (
+            "提示：X 交易密钥错误（ondemand.s … 404）——多半是 gallery-dl 版本过旧。"
+            "请更新 X-Track（或 pip install -U \"gallery-dl>=1.32.21\"），刷新 cookies 后再试。"
         ),
         "select_cookies": "选择 Cookie 文件",
         "ffmpeg_path": "ffmpeg 路径:",

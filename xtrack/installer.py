@@ -87,7 +87,7 @@ class DependencyInstaller:
         py = cls._host_python()
         if not py:
             return None
-        return py + ["-m", "pip", "install", "gallery-dl"]
+        return py + ["-m", "pip", "install", "-U", "gallery-dl>=1.32.21"]
 
     @staticmethod
     def get_platform() -> str:
