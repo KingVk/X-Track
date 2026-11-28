@@ -12,10 +12,20 @@ echo  Build X-Track %VERSION% (PyInstaller)
 echo ========================================
 echo.
 
-echo [INFO] Ensuring build deps + latest gallery-dl...
-python -m pip install -U "pyinstaller>=6.0" PyQt6 "gallery-dl>=1.32.21"
+python -c "import PyInstaller" >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] Failed to install build deps
+  echo [INFO] Installing PyInstaller...
+  python -m pip install -U "pyinstaller>=6.0" PyQt6
+  if errorlevel 1 (
+    echo [ERROR] Failed to install build deps
+    exit /b 1
+  )
+)
+
+echo [INFO] Ensuring gallery-dl ^>= 1.32.21...
+python -m pip install -U "gallery-dl>=1.32.21"
+if errorlevel 1 (
+  echo [ERROR] Failed to install/upgrade gallery-dl
   exit /b 1
 )
 python -c "import gallery_dl; print('[INFO] gallery-dl', gallery_dl.__version__)"
